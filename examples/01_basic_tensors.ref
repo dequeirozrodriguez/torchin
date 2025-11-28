@@ -1,0 +1,191 @@
+* 01_basic_tensors.ref - Basic tensor creation and operations
+*
+* This example demonstrates:
+* - Creating tensors (zeros, ones, random)
+* - Printing tensors
+* - Basic arithmetic operations
+* - Memory management
+
+$EXTERN TZeros, TOnes, TRand, TRandn, TFull, TEye, TArange, TLinspace;
+$EXTERN TClone, TFree, TFreeAll, TFromList, TToList, TItem, TScalar;
+$EXTERN TPrint, TPrintInfo, TShape, TDim, TNumel, TSize, TCount;
+$EXTERN TAdd, TSub, TMul, TMatMul, TMulScalar, TSigmoid;
+
+
+$ENTRY Go {
+  = <Main>;
+}
+
+Main {
+  = <Prout '=== RefTorch Basic Examples ==='>
+    <Prout ''>
+    <Example1-Creation>
+    <Example2-Info>
+    <Example3-Arithmetic>
+    <Example4-MatrixOps>
+    <Example5-FromList>
+    <Cleanup>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 1: Tensor Creation
+*------------------------------------------------------------------------------
+Example1-Creation {
+  = <Prout '--- Example 1: Tensor Creation ---'>
+    <Prout ''>
+    
+    <Prout 'Creating a 2x3 tensor of zeros:'>
+    <TPrint <TZeros 2 3>>
+    
+    <Prout 'Creating a 2x3 tensor of ones:'>
+    <TPrint <TOnes 2 3>>
+    
+    <Prout 'Creating a 3x3 random tensor (uniform 0-1):'>
+    <TPrint <TRand 3 3>>
+    
+    <Prout 'Creating a 2x2 random tensor (normal distribution):'>
+    <TPrint <TRandn 2 2>>
+    
+    <Prout 'Creating a 2x3 tensor filled with 7:'>
+    <TPrint <TFull 7 2 3>>
+    
+    <Prout 'Creating a 4x4 identity matrix:'>
+    <TPrint <TEye 4>>
+    
+    <Prout 'Creating arange(5) - values 0 to 4:'>
+    <TPrint <TArange 5>>
+    
+    <Prout 'Creating arange(2, 8) - values 2 to 7:'>
+    <TPrint <TArange 2 8>>
+    
+    <Prout 'Creating linspace(0, 10, 5) - 5 values from 0 to 10:'>
+    <TPrint <TLinspace 0 10 5>>
+    
+    <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 2: Tensor Information
+*------------------------------------------------------------------------------
+Example2-Info {
+  = <Prout '--- Example 2: Tensor Information ---'>
+    <Prout ''>
+    <DoExample2 <TRand 3 4 2>>;
+}
+
+DoExample2 {
+  s.T = <Prout 'Created a 3x4x2 random tensor'>
+        <TPrintInfo s.T>
+        <Prout 'Shape: ' <TShape s.T>>
+        <Prout 'Dimensions: ' <TDim s.T>>
+        <Prout 'Total elements: ' <TNumel s.T>>
+        <Prout 'Size along dim 0: ' <TSize s.T 0>>
+        <Prout 'Size along dim 1: ' <TSize s.T 1>>
+        <Prout 'Current tensor count: ' <TCount>>
+        <TFree s.T>
+        <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 3: Arithmetic Operations
+*------------------------------------------------------------------------------
+Example3-Arithmetic {
+  = <Prout '--- Example 3: Arithmetic Operations ---'>
+    <Prout ''>
+    <DoArithmetic <TOnes 2 2> <TFull 2 2 2>>;
+}
+
+DoArithmetic {
+  s.A s.B
+    = <Prout 'Tensor A (ones):'>
+      <TPrint s.A>
+      <Prout 'Tensor B (twos):'>
+      <TPrint s.B>
+      
+      <Prout 'A + B:'>
+      <PrintAndFree <TAdd s.A s.B>>
+      
+      <Prout 'A - B:'>
+      <PrintAndFree <TSub s.A s.B>>
+      
+      <Prout 'A * B (element-wise):'>
+      <PrintAndFree <TMul s.A s.B>>
+      
+      <Prout 'A * 3.5 (scalar multiply, 3500/1000):'>
+      <PrintAndFree <TMulScalar s.A 3500>>
+      
+      <TFree s.A>
+      <TFree s.B>
+      <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 4: Matrix Operations
+*------------------------------------------------------------------------------
+Example4-MatrixOps {
+  = <Prout '--- Example 4: Matrix Operations ---'>
+    <Prout ''>
+    <DoMatrixOps <TRand 2 3> <TRand 3 2>>;
+}
+
+DoMatrixOps {
+  s.A s.B
+    = <Prout 'Matrix A (2x3):'>
+      <TPrint s.A>
+      <Prout 'Matrix B (3x2):'>
+      <TPrint s.B>
+      
+      <Prout 'A @ B (matrix multiply, result 2x2):'>
+      <PrintAndFree <TMatMul s.A s.B>>
+      
+      <Prout 'Sigmoid of A:'>
+      <PrintAndFree <TSigmoid s.A>>
+      
+      <TFree s.A>
+      <TFree s.B>
+      <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 5: Creating from List
+*------------------------------------------------------------------------------
+Example5-FromList {
+  = <Prout '--- Example 5: Creating Tensor from List ---'>
+    <Prout ''>
+    <DoFromList>;
+}
+
+DoFromList {
+  = <Prout 'Creating 2x3 tensor from values 1,2,3,4,5,6:'>
+    <DoFromListPrint <TFromList (2 3) 1 2 3 4 5 6>>;
+}
+
+DoFromListPrint {
+  s.T = <TPrint s.T>
+        <Prout 'Converting back to list (values x1000):'>
+        <Prout <TToList s.T>>
+        <TFree s.T>
+        <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* Helper Functions
+*------------------------------------------------------------------------------
+PrintAndFree {
+  s.T = <TPrint s.T> <TFree s.T>;
+}
+
+Cleanup {
+  = <Prout '--- Cleanup ---'>
+    <Prout 'Tensors before cleanup: ' <TCount>>
+    <TFreeAll>
+    <Prout 'Tensors after cleanup: ' <TCount>>
+    <Prout ''>
+    <Prout '=== Examples Complete ==='>
+}

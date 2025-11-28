@@ -1,0 +1,500 @@
+* TensorCore.ref - Core tensor creation and memory management
+*
+* This module provides fundamental tensor operations:
+* - Creation: TNew, TZeros, TOnes, TRand, TRandn, TFull, TEye
+* - Memory: TFree, TClone
+* - Conversion: TFromList, TToList
+*
+* Tensors are represented as opaque integer handles (s.TensorID)
+
+%%
+#include <torch/torch.h>
+#include <iostream>
+#include <unordered_map>
+#include <vector>
+#include <sstream>
+
+namespace tensor_storage {
+    std::unordered_map<int, torch::Tensor> tensors;
+    int next_id = 1;
+    
+    int store(torch::Tensor t) {
+        int id = next_id++;
+        tensors[id] = t;
+        return id;
+    }
+    
+    torch::Tensor* get(int id) {
+        auto it = tensors.find(id);
+        if (it != tensors.end()) {
+            return &(it->second);
+        }
+        return nullptr;
+    }
+    
+    bool remove(int id) {
+        return tensors.erase(id) > 0;
+    }
+    
+    void clear() {
+        tensors.clear();
+        next_id = 1;
+    }
+}
+
+// Helper: read a list of numbers from Refal expression into vector
+std::vector<int64_t> read_int_list(refalrts::Iter& b, refalrts::Iter& e) {
+    std::vector<int64_t> result;
+    while (!refalrts::empty_seq(b, e)) {
+        if (b->tag == refalrts::cDataNumber) {
+            result.push_back(b->number_info);
+            refalrts::move_left(b, e);
+        } else {
+            break;
+        }
+    }
+    return result;
+}
+
+// Helper: read a single int
+bool read_int(refalrts::Iter& b, refalrts::Iter& e, int64_t& out) {
+    if (refalrts::empty_seq(b, e)) return false;
+    if (b->tag != refalrts::cDataNumber) return false;
+    out = b->number_info;
+    refalrts::move_left(b, e);
+    return true;
+}
+%%
+
+
+*==============================================================================
+* <TZeros e.Shape> == s.TensorID
+* Creates a tensor filled with zeros
+* Example: <TZeros 3 4> creates a 3x4 tensor of zeros
+*==============================================================================
+$ENTRY TZeros {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    std::vector<int64_t> shape = read_int_list(content_b, content_e);
+    if (shape.empty()) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor t = torch::zeros(shape);
+    int id = tensor_storage::store(t);
+    
+    refalrts::reinit_number(arg_begin, id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TOnes e.Shape> == s.TensorID
+* Creates a tensor filled with ones
+* Example: <TOnes 2 3> creates a 2x3 tensor of ones
+*==============================================================================
+$ENTRY TOnes {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    std::vector<int64_t> shape = read_int_list(content_b, content_e);
+    if (shape.empty()) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor t = torch::ones(shape);
+    int id = tensor_storage::store(t);
+    
+    refalrts::reinit_number(arg_begin, id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TRand e.Shape> == s.TensorID
+* Creates a tensor with uniform random values in [0, 1)
+* Example: <TRand 3 3> creates a 3x3 random tensor
+*==============================================================================
+$ENTRY TRand {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    std::vector<int64_t> shape = read_int_list(content_b, content_e);
+    if (shape.empty()) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor t = torch::rand(shape);
+    int id = tensor_storage::store(t);
+    
+    refalrts::reinit_number(arg_begin, id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TRandn e.Shape> == s.TensorID
+* Creates a tensor with standard normal random values (mean=0, std=1)
+* Example: <TRandn 2 2> creates a 2x2 tensor with normal distribution
+*==============================================================================
+$ENTRY TRandn {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    std::vector<int64_t> shape = read_int_list(content_b, content_e);
+    if (shape.empty()) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor t = torch::randn(shape);
+    int id = tensor_storage::store(t);
+    
+    refalrts::reinit_number(arg_begin, id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TFull s.Value e.Shape> == s.TensorID
+* Creates a tensor filled with a specific value
+* Example: <TFull 5 2 3> creates a 2x3 tensor filled with 5
+*==============================================================================
+$ENTRY TFull {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t value;
+    if (!read_int(content_b, content_e, value)) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    std::vector<int64_t> shape = read_int_list(content_b, content_e);
+    if (shape.empty()) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor t = torch::full(shape, static_cast<float>(value));
+    int id = tensor_storage::store(t);
+    
+    refalrts::reinit_number(arg_begin, id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TEye s.N> == s.TensorID
+* Creates an NxN identity matrix
+* Example: <TEye 3> creates a 3x3 identity matrix
+*==============================================================================
+$ENTRY TEye {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t n;
+    if (!read_int(content_b, content_e, n)) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor t = torch::eye(n);
+    int id = tensor_storage::store(t);
+    
+    refalrts::reinit_number(arg_begin, id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TArange s.End> == s.TensorID
+* <TArange s.Start s.End> == s.TensorID
+* <TArange s.Start s.End s.Step> == s.TensorID
+* Creates a 1D tensor with values from start to end
+* Example: <TArange 5> creates [0, 1, 2, 3, 4]
+* Example: <TArange 1 5> creates [1, 2, 3, 4]
+* Example: <TArange 0 10 2> creates [0, 2, 4, 6, 8]
+*==============================================================================
+$ENTRY TArange {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    std::vector<int64_t> args = read_int_list(content_b, content_e);
+    
+    torch::Tensor t;
+    if (args.size() == 1) {
+        t = torch::arange(args[0]);
+    } else if (args.size() == 2) {
+        t = torch::arange(args[0], args[1]);
+    } else if (args.size() == 3) {
+        t = torch::arange(args[0], args[1], args[2]);
+    } else {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    int id = tensor_storage::store(t);
+    
+    refalrts::reinit_number(arg_begin, id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TLinspace s.Start s.End s.Steps> == s.TensorID
+* Creates a 1D tensor with evenly spaced values
+* Example: <TLinspace 0 10 5> creates [0, 2.5, 5, 7.5, 10]
+*==============================================================================
+$ENTRY TLinspace {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t start, end, steps;
+    if (!read_int(content_b, content_e, start)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, end)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, steps)) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor t = torch::linspace(static_cast<float>(start), static_cast<float>(end), steps);
+    int id = tensor_storage::store(t);
+    
+    refalrts::reinit_number(arg_begin, id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TClone s.TensorID> == s.NewTensorID
+* Creates a deep copy of a tensor
+*==============================================================================
+$ENTRY TClone {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t id;
+    if (!read_int(content_b, content_e, id)) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor cloned = t->clone();
+    int new_id = tensor_storage::store(cloned);
+    
+    refalrts::reinit_number(arg_begin, new_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TFree s.TensorID> == empty
+* Frees a tensor from memory
+*==============================================================================
+$ENTRY TFree {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t id;
+    if (!read_int(content_b, content_e, id)) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    tensor_storage::remove(id);
+    
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TFreeAll> == empty
+* Frees all tensors from memory
+*==============================================================================
+$ENTRY TFreeAll {
+%%
+    tensor_storage::clear();
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TFromList (e.Shape) e.Values> == s.TensorID
+* Creates a tensor from a flat list of values with given shape
+* Example: <TFromList (2 2) 1 2 3 4> creates [[1,2],[3,4]]
+*==============================================================================
+$ENTRY TFromList {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    // Read shape from brackets
+    refalrts::Iter shape_b = 0, shape_e = 0;
+    if (!refalrts::brackets_term(shape_b, shape_e, content_b)) {
+        return refalrts::cRecognitionImpossible;
+    }
+    refalrts::move_left(content_b, content_e);
+    
+    std::vector<int64_t> shape = read_int_list(shape_b, shape_e);
+    if (shape.empty()) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    // Read values
+    std::vector<float> values;
+    while (!refalrts::empty_seq(content_b, content_e)) {
+        if (content_b->tag == refalrts::cDataNumber) {
+            values.push_back(static_cast<float>(content_b->number_info));
+            refalrts::move_left(content_b, content_e);
+        } else {
+            break;
+        }
+    }
+    
+    // Check total size matches
+    int64_t expected_size = 1;
+    for (auto dim : shape) expected_size *= dim;
+    if (static_cast<int64_t>(values.size()) != expected_size) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    // Create tensor
+    torch::Tensor t = torch::from_blob(values.data(), shape, torch::kFloat32).clone();
+    int id = tensor_storage::store(t);
+    
+    refalrts::reinit_number(arg_begin, id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TToList s.TensorID> == e.Values
+* Converts a tensor to a flat list of integer values (truncated)
+* Note: Values are multiplied by 1000 for precision, then truncated to int
+*==============================================================================
+$ENTRY TToList {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t id;
+    if (!read_int(content_b, content_e, id)) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    // Flatten and convert to float
+    torch::Tensor flat = t->flatten().to(torch::kFloat32);
+    int64_t numel = flat.numel();
+    float* data = flat.data_ptr<float>();
+    
+    // Build result - allocate nodes for each value
+    refalrts::reset_allocator(vm);
+    
+    refalrts::Iter first = 0, last = 0;
+    for (int64_t i = 0; i < numel; i++) {
+        refalrts::Iter node;
+        // Multiply by 1000 to preserve some decimal precision
+        refalrts::alloc_number(vm, node, static_cast<int>(data[i] * 1000));
+        if (first == 0) {
+            first = node;
+            last = node;
+        } else {
+            last = node;
+        }
+    }
+    
+    if (first) {
+        refalrts::splice_evar(arg_begin, first, last);
+    }
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TScalar s.Value> == s.TensorID
+* Creates a scalar (0-dimensional) tensor
+*==============================================================================
+$ENTRY TScalar {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t value;
+    if (!read_int(content_b, content_e, value)) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor t = torch::tensor(static_cast<float>(value));
+    int id = tensor_storage::store(t);
+    
+    refalrts::reinit_number(arg_begin, id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TItem s.TensorID> == s.Value
+* Gets the scalar value from a single-element tensor (multiplied by 1000)
+*==============================================================================
+$ENTRY TItem {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t id;
+    if (!read_int(content_b, content_e, id)) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t || t->numel() != 1) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    float value = t->item<float>();
+    
+    refalrts::reinit_number(arg_begin, static_cast<int>(value * 1000));
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}

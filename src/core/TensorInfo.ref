@@ -1,0 +1,285 @@
+* TensorInfo.ref - Tensor information and property queries
+*
+* This module provides functions to query tensor properties:
+* - Shape and dimensions: TShape, TSize, TDim, TNumel
+* - Display: TPrint, TPrintShape
+*
+* Note: These functions use the same tensor storage as TensorCore.ref
+
+%%
+#include <torch/torch.h>
+#include <iostream>
+#include <sstream>
+
+// Access the tensor storage from TensorCore
+namespace tensor_storage {
+    extern std::unordered_map<int, torch::Tensor> tensors;
+    
+    torch::Tensor* get(int id) {
+        auto it = tensors.find(id);
+        if (it != tensors.end()) {
+            return &(it->second);
+        }
+        return nullptr;
+    }
+}
+%%
+
+
+*==============================================================================
+* <TPrint s.TensorID> == empty
+* Prints a tensor to stdout with full details
+*==============================================================================
+$ENTRY TPrint {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) {
+        return refalrts::cRecognitionImpossible;
+    }
+    int id = content_b->number_info;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (t) {
+        std::cout << *t << std::endl;
+    } else {
+        std::cout << "[Tensor " << id << " not found]" << std::endl;
+    }
+    
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TPrintInfo s.TensorID> == empty
+* Prints tensor info (shape, dtype, device) without values
+*==============================================================================
+$ENTRY TPrintInfo {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) {
+        return refalrts::cRecognitionImpossible;
+    }
+    int id = content_b->number_info;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (t) {
+        std::cout << "Tensor #" << id << ": ";
+        std::cout << "shape=[";
+        auto sizes = t->sizes();
+        for (size_t i = 0; i < sizes.size(); i++) {
+            if (i > 0) std::cout << ", ";
+            std::cout << sizes[i];
+        }
+        std::cout << "], ";
+        std::cout << "dtype=" << t->dtype() << ", ";
+        std::cout << "device=" << t->device();
+        std::cout << std::endl;
+    } else {
+        std::cout << "[Tensor " << id << " not found]" << std::endl;
+    }
+    
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TShape s.TensorID> == e.Dimensions
+* Returns the shape of a tensor as a list of numbers
+* Example: <TShape t> where t is 3x4 returns 3 4
+*==============================================================================
+$ENTRY TShape {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) {
+        return refalrts::cRecognitionImpossible;
+    }
+    int id = content_b->number_info;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    auto sizes = t->sizes();
+    
+    refalrts::reset_allocator(vm);
+    
+    refalrts::Iter first = 0, last = 0;
+    for (auto dim : sizes) {
+        refalrts::Iter node;
+        refalrts::alloc_number(vm, node, static_cast<int>(dim));
+        if (first == 0) {
+            first = node;
+        }
+        last = node;
+    }
+    
+    if (first) {
+        refalrts::splice_evar(arg_begin, first, last);
+    }
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TDim s.TensorID> == s.NumDimensions
+* Returns the number of dimensions (rank) of a tensor
+* Example: <TDim t> where t is 3x4 returns 2
+*==============================================================================
+$ENTRY TDim {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) {
+        return refalrts::cRecognitionImpossible;
+    }
+    int id = content_b->number_info;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    refalrts::reinit_number(arg_begin, t->dim());
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TNumel s.TensorID> == s.TotalElements
+* Returns the total number of elements in a tensor
+* Example: <TNumel t> where t is 3x4 returns 12
+*==============================================================================
+$ENTRY TNumel {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) {
+        return refalrts::cRecognitionImpossible;
+    }
+    int id = content_b->number_info;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    refalrts::reinit_number(arg_begin, static_cast<int>(t->numel()));
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TSize s.TensorID s.Dimension> == s.SizeAlongDim
+* Returns the size along a specific dimension
+* Example: <TSize t 0> where t is 3x4 returns 3
+* Example: <TSize t 1> where t is 3x4 returns 4
+*==============================================================================
+$ENTRY TSize {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) {
+        return refalrts::cRecognitionImpossible;
+    }
+    int id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) {
+        return refalrts::cRecognitionImpossible;
+    }
+    int dim = content_b->number_info;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t || dim < 0 || dim >= t->dim()) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    refalrts::reinit_number(arg_begin, static_cast<int>(t->size(dim)));
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TExists s.TensorID> == True | False
+* Checks if a tensor with given ID exists
+*==============================================================================
+$ENTRY TExists {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) {
+        return refalrts::cRecognitionImpossible;
+    }
+    int id = content_b->number_info;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    
+    // Return 1 for true, 0 for false
+    refalrts::reinit_number(arg_begin, t ? 1 : 0);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TCount> == s.NumberOfTensors
+* Returns the current number of tensors in storage
+*==============================================================================
+$ENTRY TCount {
+%%
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end->prev);
+    refalrts::reinit_number(arg_begin, static_cast<int>(tensor_storage::tensors.size()));
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TIsContiguous s.TensorID> == 1 | 0
+* Checks if tensor is stored contiguously in memory
+*==============================================================================
+$ENTRY TIsContiguous {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) {
+        return refalrts::cRecognitionImpossible;
+    }
+    int id = content_b->number_info;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    refalrts::reinit_number(arg_begin, t->is_contiguous() ? 1 : 0);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}

@@ -1,0 +1,775 @@
+* TensorManip.ref - Tensor manipulation operations
+*
+* This module provides shape manipulation functions:
+* - Reshaping: TReshape, TFlatten, TView
+* - Transposing: TTranspose, TT, TPermute
+* - Combining: TCat, TStack, TVStack, THStack
+* - Slicing: TSlice, TIndex, TNarrow
+* - Dimension ops: TSqueeze, TUnsqueeze, TExpand
+
+%%
+#include <torch/torch.h>
+#include <vector>
+
+// Access the tensor storage from TensorCore
+namespace tensor_storage {
+    extern std::unordered_map<int, torch::Tensor> tensors;
+    extern int next_id;
+    
+    int store(torch::Tensor t) {
+        int id = next_id++;
+        tensors[id] = t;
+        return id;
+    }
+    
+    torch::Tensor* get(int id) {
+        auto it = tensors.find(id);
+        if (it != tensors.end()) {
+            return &(it->second);
+        }
+        return nullptr;
+    }
+}
+
+// Helper: read list of ints
+std::vector<int64_t> read_int_list(refalrts::Iter& b, refalrts::Iter& e) {
+    std::vector<int64_t> result;
+    while (!refalrts::empty_seq(b, e)) {
+        if (b->tag == refalrts::cDataNumber) {
+            result.push_back(b->number_info);
+            refalrts::move_left(b, e);
+        } else {
+            break;
+        }
+    }
+    return result;
+}
+
+#define GET_ONE_TENSOR(id, t) \
+    refalrts::Iter content_b = 0, content_e = 0; \
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end); \
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible; \
+    int id = content_b->number_info; \
+    refalrts::move_left(content_b, content_e); \
+    torch::Tensor* t = tensor_storage::get(id); \
+    if (!t) return refalrts::cRecognitionImpossible;
+
+#define RETURN_TENSOR(result) \
+    int result_id = tensor_storage::store(result); \
+    refalrts::reinit_number(arg_begin, result_id); \
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end); \
+    return refalrts::cSuccess;
+%%
+
+
+*==============================================================================
+* RESHAPING OPERATIONS
+*==============================================================================
+
+*==============================================================================
+* <TReshape s.TensorID e.NewShape> == s.TensorResult
+* Reshape tensor to new dimensions (total elements must match)
+* Example: <TReshape t 2 6> reshapes a 3x4 tensor to 2x6
+*==============================================================================
+$ENTRY TReshape {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    std::vector<int64_t> new_shape = read_int_list(content_b, content_e);
+    if (new_shape.empty()) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor result = t->reshape(new_shape);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TView s.TensorID e.NewShape> == s.TensorResult
+* View tensor with new shape (must be contiguous, shares memory)
+* Use -1 for one dimension to infer its size
+* Example: <TView t 3 -1> with 12 elements gives 3x4
+*==============================================================================
+$ENTRY TView {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    std::vector<int64_t> new_shape = read_int_list(content_b, content_e);
+    if (new_shape.empty()) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor result = t->view(new_shape);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TFlatten s.TensorID> == s.TensorResult
+* Flatten tensor to 1D
+* Example: <TFlatten t> where t is 3x4 gives tensor of 12 elements
+*==============================================================================
+$ENTRY TFlatten {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) {
+        return refalrts::cRecognitionImpossible;
+    }
+    int id = content_b->number_info;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = t->flatten();
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TFlattenRange s.TensorID s.StartDim s.EndDim> == s.TensorResult
+* Flatten dimensions from start_dim to end_dim
+*==============================================================================
+$ENTRY TFlattenRange {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int start_dim = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int end_dim = content_b->number_info;
+    
+    torch::Tensor result = t->flatten(start_dim, end_dim);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* TRANSPOSE OPERATIONS
+*==============================================================================
+
+*==============================================================================
+* <TTranspose s.TensorID s.Dim0 s.Dim1> == s.TensorResult
+* Swap two dimensions
+* Example: <TTranspose t 0 1> swaps first two dimensions
+*==============================================================================
+$ENTRY TTranspose {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim0 = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim1 = content_b->number_info;
+    
+    torch::Tensor result = t->transpose(dim0, dim1);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TT s.TensorID> == s.TensorResult
+* Transpose a 2D matrix (shorthand for <TTranspose t 0 1>)
+*==============================================================================
+$ENTRY TT {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) {
+        return refalrts::cRecognitionImpossible;
+    }
+    int id = content_b->number_info;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = t->t();
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TPermute s.TensorID e.Dims> == s.TensorResult
+* Permute dimensions according to the given order
+* Example: <TPermute t 2 0 1> for a 3D tensor
+*==============================================================================
+$ENTRY TPermute {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    std::vector<int64_t> dims = read_int_list(content_b, content_e);
+    if (dims.empty()) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor result = t->permute(dims);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TContiguous s.TensorID> == s.TensorResult
+* Return a contiguous tensor (copy if necessary)
+*==============================================================================
+$ENTRY TContiguous {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) {
+        return refalrts::cRecognitionImpossible;
+    }
+    int id = content_b->number_info;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = t->contiguous();
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* DIMENSION OPERATIONS
+*==============================================================================
+
+*==============================================================================
+* <TSqueeze s.TensorID> == s.TensorResult
+* Remove all dimensions of size 1
+* Example: tensor of shape [1,3,1,4] becomes [3,4]
+*==============================================================================
+$ENTRY TSqueeze {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) {
+        return refalrts::cRecognitionImpossible;
+    }
+    int id = content_b->number_info;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = t->squeeze();
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TSqueezeDim s.TensorID s.Dim> == s.TensorResult
+* Remove dimension at given position if size is 1
+*==============================================================================
+$ENTRY TSqueezeDim {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->squeeze(dim);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TUnsqueeze s.TensorID s.Dim> == s.TensorResult
+* Add a dimension of size 1 at the given position
+* Example: <TUnsqueeze t 0> on shape [3,4] gives [1,3,4]
+*==============================================================================
+$ENTRY TUnsqueeze {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->unsqueeze(dim);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* COMBINING OPERATIONS
+*==============================================================================
+
+*==============================================================================
+* <TCat s.Dim s.Tensor1 s.Tensor2 ...> == s.TensorResult
+* Concatenate tensors along a dimension
+* Example: <TCat 0 t1 t2> concatenates along first dimension
+*==============================================================================
+$ENTRY TCat {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    // First argument is dimension
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    // Collect tensors
+    std::vector<torch::Tensor> tensors;
+    while (!refalrts::empty_seq(content_b, content_e)) {
+        if (content_b->tag != refalrts::cDataNumber) break;
+        int tid = content_b->number_info;
+        torch::Tensor* t = tensor_storage::get(tid);
+        if (!t) return refalrts::cRecognitionImpossible;
+        tensors.push_back(*t);
+        refalrts::move_left(content_b, content_e);
+    }
+    
+    if (tensors.empty()) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = torch::cat(tensors, dim);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TStack s.Dim s.Tensor1 s.Tensor2 ...> == s.TensorResult
+* Stack tensors along a new dimension
+* Example: <TStack 0 t1 t2> stacks along new first dimension
+*==============================================================================
+$ENTRY TStack {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    // First argument is dimension
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    // Collect tensors
+    std::vector<torch::Tensor> tensors;
+    while (!refalrts::empty_seq(content_b, content_e)) {
+        if (content_b->tag != refalrts::cDataNumber) break;
+        int tid = content_b->number_info;
+        torch::Tensor* t = tensor_storage::get(tid);
+        if (!t) return refalrts::cRecognitionImpossible;
+        tensors.push_back(*t);
+        refalrts::move_left(content_b, content_e);
+    }
+    
+    if (tensors.empty()) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = torch::stack(tensors, dim);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TVStack s.Tensor1 s.Tensor2 ...> == s.TensorResult
+* Vertical stack (along dimension 0)
+*==============================================================================
+$ENTRY TVStack {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    std::vector<torch::Tensor> tensors;
+    while (!refalrts::empty_seq(content_b, content_e)) {
+        if (content_b->tag != refalrts::cDataNumber) break;
+        int tid = content_b->number_info;
+        torch::Tensor* t = tensor_storage::get(tid);
+        if (!t) return refalrts::cRecognitionImpossible;
+        tensors.push_back(*t);
+        refalrts::move_left(content_b, content_e);
+    }
+    
+    if (tensors.empty()) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = torch::vstack(tensors);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <THStack s.Tensor1 s.Tensor2 ...> == s.TensorResult
+* Horizontal stack (along dimension 1)
+*==============================================================================
+$ENTRY THStack {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    std::vector<torch::Tensor> tensors;
+    while (!refalrts::empty_seq(content_b, content_e)) {
+        if (content_b->tag != refalrts::cDataNumber) break;
+        int tid = content_b->number_info;
+        torch::Tensor* t = tensor_storage::get(tid);
+        if (!t) return refalrts::cRecognitionImpossible;
+        tensors.push_back(*t);
+        refalrts::move_left(content_b, content_e);
+    }
+    
+    if (tensors.empty()) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = torch::hstack(tensors);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* SLICING AND INDEXING
+*==============================================================================
+
+*==============================================================================
+* <TSlice s.TensorID s.Dim s.Start s.End> == s.TensorResult
+* Slice tensor along dimension from start to end (exclusive)
+* Example: <TSlice t 0 1 3> gets rows 1 and 2 (0-indexed)
+*==============================================================================
+$ENTRY TSlice {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int start = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int end = content_b->number_info;
+    
+    torch::Tensor result = t->slice(dim, start, end);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TNarrow s.TensorID s.Dim s.Start s.Length> == s.TensorResult
+* Narrow tensor along dimension starting at start for length elements
+*==============================================================================
+$ENTRY TNarrow {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int start = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int length = content_b->number_info;
+    
+    torch::Tensor result = t->narrow(dim, start, length);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TSelect s.TensorID s.Dim s.Index> == s.TensorResult
+* Select a single slice along a dimension (reduces dimensionality by 1)
+* Example: <TSelect t 0 2> selects row 2 from a matrix
+*==============================================================================
+$ENTRY TSelect {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int index = content_b->number_info;
+    
+    torch::Tensor result = t->select(dim, index);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TIndexSelect s.TensorID s.Dim s.IndicesTensorID> == s.TensorResult
+* Select elements along dimension using indices tensor
+*==============================================================================
+$ENTRY TIndexSelect {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int indices_id = content_b->number_info;
+    
+    torch::Tensor* indices = tensor_storage::get(indices_id);
+    if (!indices) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = t->index_select(dim, indices->to(torch::kLong));
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TGather s.TensorID s.Dim s.IndicesTensorID> == s.TensorResult
+* Gather values along dimension according to indices
+*==============================================================================
+$ENTRY TGather {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int indices_id = content_b->number_info;
+    
+    torch::Tensor* indices = tensor_storage::get(indices_id);
+    if (!indices) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = t->gather(dim, indices->to(torch::kLong));
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* SPLITTING
+*==============================================================================
+
+*==============================================================================
+* <TSplit s.TensorID s.SplitSize s.Dim> == s.Tensor1 s.Tensor2 ...
+* Split tensor into chunks of given size along dimension
+* Returns multiple tensor IDs
+*==============================================================================
+$ENTRY TSplit {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int split_size = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    auto chunks = t->split(split_size, dim);
+    
+    refalrts::reset_allocator(vm);
+    
+    refalrts::Iter first = 0, last = 0;
+    for (auto& chunk : chunks) {
+        int chunk_id = tensor_storage::store(chunk);
+        refalrts::Iter node;
+        refalrts::alloc_number(vm, node, chunk_id);
+        if (first == 0) {
+            first = node;
+        }
+        last = node;
+    }
+    
+    if (first) {
+        refalrts::splice_evar(arg_begin, first, last);
+    }
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TChunk s.TensorID s.NumChunks s.Dim> == s.Tensor1 s.Tensor2 ...
+* Split tensor into specified number of chunks along dimension
+*==============================================================================
+$ENTRY TChunk {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int num_chunks = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    auto chunks = t->chunk(num_chunks, dim);
+    
+    refalrts::reset_allocator(vm);
+    
+    refalrts::Iter first = 0, last = 0;
+    for (auto& chunk : chunks) {
+        int chunk_id = tensor_storage::store(chunk);
+        refalrts::Iter node;
+        refalrts::alloc_number(vm, node, chunk_id);
+        if (first == 0) {
+            first = node;
+        }
+        last = node;
+    }
+    
+    if (first) {
+        refalrts::splice_evar(arg_begin, first, last);
+    }
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* REPEATING AND TILING
+*==============================================================================
+
+*==============================================================================
+* <TRepeat s.TensorID e.Repeats> == s.TensorResult
+* Repeat tensor along each dimension
+* Example: <TRepeat t 2 3> repeats 2x along dim0, 3x along dim1
+*==============================================================================
+$ENTRY TRepeat {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    std::vector<int64_t> repeats = read_int_list(content_b, content_e);
+    if (repeats.empty()) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor result = t->repeat(repeats);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TTile s.TensorID e.Reps> == s.TensorResult
+* Tile tensor (like numpy.tile)
+*==============================================================================
+$ENTRY TTile {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    std::vector<int64_t> reps = read_int_list(content_b, content_e);
+    if (reps.empty()) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor result = t->tile(reps);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* FLIPPING
+*==============================================================================
+
+*==============================================================================
+* <TFlip s.TensorID e.Dims> == s.TensorResult
+* Flip tensor along specified dimensions
+* Example: <TFlip t 0> flips along first dimension
+*==============================================================================
+$ENTRY TFlip {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    std::vector<int64_t> dims = read_int_list(content_b, content_e);
+    if (dims.empty()) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor result = t->flip(dims);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TFlipLR s.TensorID> == s.TensorResult
+* Flip tensor left-right (along last dimension)
+*==============================================================================
+$ENTRY TFlipLR {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) {
+        return refalrts::cRecognitionImpossible;
+    }
+    int id = content_b->number_info;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = t->fliplr();
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TFlipUD s.TensorID> == s.TensorResult
+* Flip tensor up-down (along first dimension)
+*==============================================================================
+$ENTRY TFlipUD {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) {
+        return refalrts::cRecognitionImpossible;
+    }
+    int id = content_b->number_info;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = t->flipud();
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TRoll s.TensorID s.Shift s.Dim> == s.TensorResult
+* Roll tensor elements along dimension
+*==============================================================================
+$ENTRY TRoll {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int shift = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->roll(shift, dim);
+    RETURN_TENSOR(result);
+%%
+}

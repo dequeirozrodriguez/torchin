@@ -1,0 +1,554 @@
+* TensorMath.ref - Basic mathematical operations on tensors
+*
+* This module provides element-wise and matrix operations:
+* - Arithmetic: TAdd, TSub, TMul, TDiv, TAddScalar, TMulScalar
+* - Matrix ops: TMatMul, TDot
+* - Unary ops: TNeg, TAbs, TSqrt, TExp, TLog, TPow
+* - In-place variants: TAdd_, TSub_, TMul_, TDiv_
+
+%%
+#include <torch/torch.h>
+#include <cmath>
+
+// Access the tensor storage from TensorCore
+namespace tensor_storage {
+    extern std::unordered_map<int, torch::Tensor> tensors;
+    extern int next_id;
+    
+    int store(torch::Tensor t) {
+        int id = next_id++;
+        tensors[id] = t;
+        return id;
+    }
+    
+    torch::Tensor* get(int id) {
+        auto it = tensors.find(id);
+        if (it != tensors.end()) {
+            return &(it->second);
+        }
+        return nullptr;
+    }
+}
+
+// Helper macros for common patterns
+#define GET_TWO_TENSORS(id_a, id_b, t_a, t_b) \
+    refalrts::Iter content_b = 0, content_e = 0; \
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end); \
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible; \
+    int id_a = content_b->number_info; \
+    refalrts::move_left(content_b, content_e); \
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible; \
+    int id_b = content_b->number_info; \
+    torch::Tensor* t_a = tensor_storage::get(id_a); \
+    torch::Tensor* t_b = tensor_storage::get(id_b); \
+    if (!t_a || !t_b) return refalrts::cRecognitionImpossible;
+
+#define GET_ONE_TENSOR(id, t) \
+    refalrts::Iter content_b = 0, content_e = 0; \
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end); \
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible; \
+    int id = content_b->number_info; \
+    torch::Tensor* t = tensor_storage::get(id); \
+    if (!t) return refalrts::cRecognitionImpossible;
+
+#define RETURN_TENSOR(result) \
+    int result_id = tensor_storage::store(result); \
+    refalrts::reinit_number(arg_begin, result_id); \
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end); \
+    return refalrts::cSuccess;
+%%
+
+
+*==============================================================================
+* ELEMENT-WISE ARITHMETIC OPERATIONS
+*==============================================================================
+
+*==============================================================================
+* <TAdd s.TensorA s.TensorB> == s.TensorResult
+* Element-wise addition: C = A + B
+*==============================================================================
+$ENTRY TAdd {
+%%
+    GET_TWO_TENSORS(id_a, id_b, t_a, t_b);
+    torch::Tensor result = *t_a + *t_b;
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TSub s.TensorA s.TensorB> == s.TensorResult
+* Element-wise subtraction: C = A - B
+*==============================================================================
+$ENTRY TSub {
+%%
+    GET_TWO_TENSORS(id_a, id_b, t_a, t_b);
+    torch::Tensor result = *t_a - *t_b;
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMul s.TensorA s.TensorB> == s.TensorResult
+* Element-wise multiplication: C = A * B (Hadamard product)
+*==============================================================================
+$ENTRY TMul {
+%%
+    GET_TWO_TENSORS(id_a, id_b, t_a, t_b);
+    torch::Tensor result = *t_a * *t_b;
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TDiv s.TensorA s.TensorB> == s.TensorResult
+* Element-wise division: C = A / B
+*==============================================================================
+$ENTRY TDiv {
+%%
+    GET_TWO_TENSORS(id_a, id_b, t_a, t_b);
+    torch::Tensor result = *t_a / *t_b;
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* SCALAR OPERATIONS
+*==============================================================================
+
+*==============================================================================
+* <TAddScalar s.Tensor s.Scalar> == s.TensorResult
+* Add a scalar to all elements: C = A + scalar
+* Note: scalar is divided by 1000 (to allow decimals like 1500 = 1.5)
+*==============================================================================
+$ENTRY TAddScalar {
+%%
+    GET_ONE_TENSOR(id, t);
+    refalrts::move_left(content_b, content_e);
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    float scalar = content_b->number_info / 1000.0f;
+    
+    torch::Tensor result = *t + scalar;
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TSubScalar s.Tensor s.Scalar> == s.TensorResult
+* Subtract a scalar from all elements: C = A - scalar
+*==============================================================================
+$ENTRY TSubScalar {
+%%
+    GET_ONE_TENSOR(id, t);
+    refalrts::move_left(content_b, content_e);
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    float scalar = content_b->number_info / 1000.0f;
+    
+    torch::Tensor result = *t - scalar;
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMulScalar s.Tensor s.Scalar> == s.TensorResult
+* Multiply all elements by a scalar: C = A * scalar
+*==============================================================================
+$ENTRY TMulScalar {
+%%
+    GET_ONE_TENSOR(id, t);
+    refalrts::move_left(content_b, content_e);
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    float scalar = content_b->number_info / 1000.0f;
+    
+    torch::Tensor result = *t * scalar;
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TDivScalar s.Tensor s.Scalar> == s.TensorResult
+* Divide all elements by a scalar: C = A / scalar
+*==============================================================================
+$ENTRY TDivScalar {
+%%
+    GET_ONE_TENSOR(id, t);
+    refalrts::move_left(content_b, content_e);
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    float scalar = content_b->number_info / 1000.0f;
+    
+    if (scalar == 0.0f) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = *t / scalar;
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* MATRIX OPERATIONS
+*==============================================================================
+
+*==============================================================================
+* <TMatMul s.TensorA s.TensorB> == s.TensorResult
+* Matrix multiplication: C = A @ B
+*==============================================================================
+$ENTRY TMatMul {
+%%
+    GET_TWO_TENSORS(id_a, id_b, t_a, t_b);
+    torch::Tensor result = torch::matmul(*t_a, *t_b);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TDot s.TensorA s.TensorB> == s.TensorResult
+* Dot product of two 1D tensors
+*==============================================================================
+$ENTRY TDot {
+%%
+    GET_TWO_TENSORS(id_a, id_b, t_a, t_b);
+    torch::Tensor result = torch::dot(*t_a, *t_b);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMM s.TensorA s.TensorB> == s.TensorResult
+* Matrix-matrix multiplication (2D tensors only): C = A @ B
+*==============================================================================
+$ENTRY TMM {
+%%
+    GET_TWO_TENSORS(id_a, id_b, t_a, t_b);
+    torch::Tensor result = torch::mm(*t_a, *t_b);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMV s.Matrix s.Vector> == s.TensorResult
+* Matrix-vector multiplication: c = A @ v
+*==============================================================================
+$ENTRY TMV {
+%%
+    GET_TWO_TENSORS(id_a, id_b, t_a, t_b);
+    torch::Tensor result = torch::mv(*t_a, *t_b);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TOuterProduct s.TensorA s.TensorB> == s.TensorResult
+* Outer product of two 1D tensors: C[i,j] = A[i] * B[j]
+*==============================================================================
+$ENTRY TOuterProduct {
+%%
+    GET_TWO_TENSORS(id_a, id_b, t_a, t_b);
+    torch::Tensor result = torch::outer(*t_a, *t_b);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* UNARY OPERATIONS
+*==============================================================================
+
+*==============================================================================
+* <TNeg s.Tensor> == s.TensorResult
+* Negation: C = -A
+*==============================================================================
+$ENTRY TNeg {
+%%
+    GET_ONE_TENSOR(id, t);
+    torch::Tensor result = -*t;
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TAbs s.Tensor> == s.TensorResult
+* Absolute value: C = |A|
+*==============================================================================
+$ENTRY TAbs {
+%%
+    GET_ONE_TENSOR(id, t);
+    torch::Tensor result = torch::abs(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TSqrt s.Tensor> == s.TensorResult
+* Square root: C = sqrt(A)
+*==============================================================================
+$ENTRY TSqrt {
+%%
+    GET_ONE_TENSOR(id, t);
+    torch::Tensor result = torch::sqrt(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TExp s.Tensor> == s.TensorResult
+* Exponential: C = exp(A)
+*==============================================================================
+$ENTRY TExp {
+%%
+    GET_ONE_TENSOR(id, t);
+    torch::Tensor result = torch::exp(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TLog s.Tensor> == s.TensorResult
+* Natural logarithm: C = ln(A)
+*==============================================================================
+$ENTRY TLog {
+%%
+    GET_ONE_TENSOR(id, t);
+    torch::Tensor result = torch::log(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TPow s.Tensor s.Exponent> == s.TensorResult
+* Power: C = A^exponent
+* Note: exponent is divided by 1000
+*==============================================================================
+$ENTRY TPow {
+%%
+    GET_ONE_TENSOR(id, t);
+    refalrts::move_left(content_b, content_e);
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    float exp = content_b->number_info / 1000.0f;
+    
+    torch::Tensor result = torch::pow(*t, exp);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TSquare s.Tensor> == s.TensorResult
+* Square: C = A^2
+*==============================================================================
+$ENTRY TSquare {
+%%
+    GET_ONE_TENSOR(id, t);
+    torch::Tensor result = torch::square(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TReciprocal s.Tensor> == s.TensorResult
+* Reciprocal: C = 1/A
+*==============================================================================
+$ENTRY TReciprocal {
+%%
+    GET_ONE_TENSOR(id, t);
+    torch::Tensor result = torch::reciprocal(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* TRIGONOMETRIC OPERATIONS
+*==============================================================================
+
+*==============================================================================
+* <TSin s.Tensor> == s.TensorResult
+*==============================================================================
+$ENTRY TSin {
+%%
+    GET_ONE_TENSOR(id, t);
+    torch::Tensor result = torch::sin(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TCos s.Tensor> == s.TensorResult
+*==============================================================================
+$ENTRY TCos {
+%%
+    GET_ONE_TENSOR(id, t);
+    torch::Tensor result = torch::cos(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TTan s.Tensor> == s.TensorResult
+*==============================================================================
+$ENTRY TTan {
+%%
+    GET_ONE_TENSOR(id, t);
+    torch::Tensor result = torch::tan(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TTanh s.Tensor> == s.TensorResult
+* Hyperbolic tangent
+*==============================================================================
+$ENTRY TTanh {
+%%
+    GET_ONE_TENSOR(id, t);
+    torch::Tensor result = torch::tanh(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TSigmoid s.Tensor> == s.TensorResult
+* Sigmoid function: 1 / (1 + exp(-x))
+*==============================================================================
+$ENTRY TSigmoid {
+%%
+    GET_ONE_TENSOR(id, t);
+    torch::Tensor result = torch::sigmoid(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* COMPARISON OPERATIONS (return 0/1 tensors)
+*==============================================================================
+
+*==============================================================================
+* <TEq s.TensorA s.TensorB> == s.TensorResult
+* Element-wise equality: C = (A == B)
+*==============================================================================
+$ENTRY TEq {
+%%
+    GET_TWO_TENSORS(id_a, id_b, t_a, t_b);
+    torch::Tensor result = torch::eq(*t_a, *t_b).to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TGt s.TensorA s.TensorB> == s.TensorResult
+* Element-wise greater than: C = (A > B)
+*==============================================================================
+$ENTRY TGt {
+%%
+    GET_TWO_TENSORS(id_a, id_b, t_a, t_b);
+    torch::Tensor result = torch::gt(*t_a, *t_b).to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TLt s.TensorA s.TensorB> == s.TensorResult
+* Element-wise less than: C = (A < B)
+*==============================================================================
+$ENTRY TLt {
+%%
+    GET_TWO_TENSORS(id_a, id_b, t_a, t_b);
+    torch::Tensor result = torch::lt(*t_a, *t_b).to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TGe s.TensorA s.TensorB> == s.TensorResult
+* Element-wise greater or equal: C = (A >= B)
+*==============================================================================
+$ENTRY TGe {
+%%
+    GET_TWO_TENSORS(id_a, id_b, t_a, t_b);
+    torch::Tensor result = torch::ge(*t_a, *t_b).to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TLe s.TensorA s.TensorB> == s.TensorResult
+* Element-wise less or equal: C = (A <= B)
+*==============================================================================
+$ENTRY TLe {
+%%
+    GET_TWO_TENSORS(id_a, id_b, t_a, t_b);
+    torch::Tensor result = torch::le(*t_a, *t_b).to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TClamp s.Tensor s.Min s.Max> == s.TensorResult
+* Clamp values to [min, max] range
+* Note: min and max are divided by 1000
+*==============================================================================
+$ENTRY TClamp {
+%%
+    GET_ONE_TENSOR(id, t);
+    refalrts::move_left(content_b, content_e);
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    float min_val = content_b->number_info / 1000.0f;
+    refalrts::move_left(content_b, content_e);
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    float max_val = content_b->number_info / 1000.0f;
+    
+    torch::Tensor result = torch::clamp(*t, min_val, max_val);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMax2 s.TensorA s.TensorB> == s.TensorResult
+* Element-wise maximum of two tensors
+*==============================================================================
+$ENTRY TMax2 {
+%%
+    GET_TWO_TENSORS(id_a, id_b, t_a, t_b);
+    torch::Tensor result = torch::max(*t_a, *t_b);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMin2 s.TensorA s.TensorB> == s.TensorResult
+* Element-wise minimum of two tensors
+*==============================================================================
+$ENTRY TMin2 {
+%%
+    GET_TWO_TENSORS(id_a, id_b, t_a, t_b);
+    torch::Tensor result = torch::min(*t_a, *t_b);
+    RETURN_TENSOR(result);
+%%
+}

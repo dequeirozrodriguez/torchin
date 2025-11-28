@@ -1,0 +1,806 @@
+* TensorReduce.ref - Reduction operations on tensors
+*
+* This module provides reduction functions:
+* - Basic: TSum, TMean, TProd
+* - Min/Max: TMax, TMin, TArgmax, TArgmin
+* - Statistics: TStd, TVar, TNorm
+* - Logical: TAny, TAll
+
+%%
+#include <torch/torch.h>
+
+// Access the tensor storage from TensorCore
+namespace tensor_storage {
+    extern std::unordered_map<int, torch::Tensor> tensors;
+    extern int next_id;
+    
+    int store(torch::Tensor t) {
+        int id = next_id++;
+        tensors[id] = t;
+        return id;
+    }
+    
+    torch::Tensor* get(int id) {
+        auto it = tensors.find(id);
+        if (it != tensors.end()) {
+            return &(it->second);
+        }
+        return nullptr;
+    }
+}
+
+#define GET_ONE_TENSOR(id, t) \
+    refalrts::Iter content_b = 0, content_e = 0; \
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end); \
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible; \
+    int id = content_b->number_info; \
+    refalrts::move_left(content_b, content_e); \
+    torch::Tensor* t = tensor_storage::get(id); \
+    if (!t) return refalrts::cRecognitionImpossible;
+
+#define GET_ONE_TENSOR_ONLY(id, t) \
+    refalrts::Iter content_b = 0, content_e = 0; \
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end); \
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible; \
+    int id = content_b->number_info; \
+    torch::Tensor* t = tensor_storage::get(id); \
+    if (!t) return refalrts::cRecognitionImpossible;
+
+#define RETURN_TENSOR(result) \
+    int result_id = tensor_storage::store(result); \
+    refalrts::reinit_number(arg_begin, result_id); \
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end); \
+    return refalrts::cSuccess;
+%%
+
+
+*==============================================================================
+* SUM OPERATIONS
+*==============================================================================
+
+*==============================================================================
+* <TSum s.TensorID> == s.TensorResult
+* Sum all elements, returns scalar tensor
+*==============================================================================
+$ENTRY TSum {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->sum();
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TSumDim s.TensorID s.Dim> == s.TensorResult
+* Sum along a specific dimension
+* Example: <TSumDim t 0> sums along rows
+*==============================================================================
+$ENTRY TSumDim {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->sum(dim);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TSumDimKeep s.TensorID s.Dim> == s.TensorResult
+* Sum along dimension, keeping dimension (size 1)
+*==============================================================================
+$ENTRY TSumDimKeep {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->sum(dim, /*keepdim=*/true);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* MEAN OPERATIONS
+*==============================================================================
+
+*==============================================================================
+* <TMean s.TensorID> == s.TensorResult
+* Mean of all elements
+*==============================================================================
+$ENTRY TMean {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->mean();
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMeanDim s.TensorID s.Dim> == s.TensorResult
+* Mean along a specific dimension
+*==============================================================================
+$ENTRY TMeanDim {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->mean(dim);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMeanDimKeep s.TensorID s.Dim> == s.TensorResult
+* Mean along dimension, keeping dimension
+*==============================================================================
+$ENTRY TMeanDimKeep {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->mean(dim, /*keepdim=*/true);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* PRODUCT OPERATIONS
+*==============================================================================
+
+*==============================================================================
+* <TProd s.TensorID> == s.TensorResult
+* Product of all elements
+*==============================================================================
+$ENTRY TProd {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->prod();
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TProdDim s.TensorID s.Dim> == s.TensorResult
+* Product along a specific dimension
+*==============================================================================
+$ENTRY TProdDim {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->prod(dim);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* MAX OPERATIONS
+*==============================================================================
+
+*==============================================================================
+* <TMax s.TensorID> == s.TensorResult
+* Maximum of all elements, returns scalar tensor
+*==============================================================================
+$ENTRY TMax {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->max();
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMaxDim s.TensorID s.Dim> == s.ValuesTensor s.IndicesTensor
+* Maximum along dimension, returns both values and indices
+*==============================================================================
+$ENTRY TMaxDim {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    auto [values, indices] = t->max(dim);
+    int values_id = tensor_storage::store(values);
+    int indices_id = tensor_storage::store(indices.to(torch::kFloat32));
+    
+    refalrts::reset_allocator(vm);
+    refalrts::Iter node1, node2;
+    refalrts::alloc_number(vm, node1, values_id);
+    refalrts::alloc_number(vm, node2, indices_id);
+    
+    refalrts::splice_evar(arg_begin, node1, node2);
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TMaxDimOnly s.TensorID s.Dim> == s.TensorResult
+* Maximum values along dimension (no indices)
+*==============================================================================
+$ENTRY TMaxDimOnly {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = std::get<0>(t->max(dim));
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* MIN OPERATIONS
+*==============================================================================
+
+*==============================================================================
+* <TMin s.TensorID> == s.TensorResult
+* Minimum of all elements
+*==============================================================================
+$ENTRY TMin {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->min();
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMinDim s.TensorID s.Dim> == s.ValuesTensor s.IndicesTensor
+* Minimum along dimension, returns both values and indices
+*==============================================================================
+$ENTRY TMinDim {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    auto [values, indices] = t->min(dim);
+    int values_id = tensor_storage::store(values);
+    int indices_id = tensor_storage::store(indices.to(torch::kFloat32));
+    
+    refalrts::reset_allocator(vm);
+    refalrts::Iter node1, node2;
+    refalrts::alloc_number(vm, node1, values_id);
+    refalrts::alloc_number(vm, node2, indices_id);
+    
+    refalrts::splice_evar(arg_begin, node1, node2);
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TMinDimOnly s.TensorID s.Dim> == s.TensorResult
+* Minimum values along dimension (no indices)
+*==============================================================================
+$ENTRY TMinDimOnly {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = std::get<0>(t->min(dim));
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* ARGMAX / ARGMIN
+*==============================================================================
+
+*==============================================================================
+* <TArgmax s.TensorID> == s.TensorResult
+* Index of maximum element (flattened)
+*==============================================================================
+$ENTRY TArgmax {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->argmax().to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TArgmaxDim s.TensorID s.Dim> == s.TensorResult
+* Indices of maximum elements along dimension
+*==============================================================================
+$ENTRY TArgmaxDim {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->argmax(dim).to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TArgmin s.TensorID> == s.TensorResult
+* Index of minimum element (flattened)
+*==============================================================================
+$ENTRY TArgmin {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->argmin().to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TArgminDim s.TensorID s.Dim> == s.TensorResult
+* Indices of minimum elements along dimension
+*==============================================================================
+$ENTRY TArgminDim {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->argmin(dim).to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* STATISTICS
+*==============================================================================
+
+*==============================================================================
+* <TStd s.TensorID> == s.TensorResult
+* Standard deviation of all elements
+*==============================================================================
+$ENTRY TStd {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->std();
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TStdDim s.TensorID s.Dim> == s.TensorResult
+* Standard deviation along dimension
+*==============================================================================
+$ENTRY TStdDim {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->std(dim);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TVar s.TensorID> == s.TensorResult
+* Variance of all elements
+*==============================================================================
+$ENTRY TVar {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->var();
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TVarDim s.TensorID s.Dim> == s.TensorResult
+* Variance along dimension
+*==============================================================================
+$ENTRY TVarDim {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->var(dim);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMedian s.TensorID> == s.TensorResult
+* Median of all elements
+*==============================================================================
+$ENTRY TMedian {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->median();
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* NORMS
+*==============================================================================
+
+*==============================================================================
+* <TNorm s.TensorID> == s.TensorResult
+* Frobenius norm (L2 norm of all elements)
+*==============================================================================
+$ENTRY TNorm {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->norm();
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TNormP s.TensorID s.P> == s.TensorResult
+* P-norm of all elements (p is divided by 1000)
+* Example: <TNormP t 1000> for L1 norm, <TNormP t 2000> for L2 norm
+*==============================================================================
+$ENTRY TNormP {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    float p = content_b->number_info / 1000.0f;
+    
+    torch::Tensor result = t->norm(p);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TNormDim s.TensorID s.P s.Dim> == s.TensorResult
+* P-norm along dimension
+*==============================================================================
+$ENTRY TNormDim {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    float p = content_b->number_info / 1000.0f;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->norm(p, dim);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* LOGICAL REDUCTIONS
+*==============================================================================
+
+*==============================================================================
+* <TAny s.TensorID> == s.TensorResult
+* True (1) if any element is non-zero
+*==============================================================================
+$ENTRY TAny {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->any().to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TAnyDim s.TensorID s.Dim> == s.TensorResult
+* Any along dimension
+*==============================================================================
+$ENTRY TAnyDim {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->any(dim).to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TAll s.TensorID> == s.TensorResult
+* True (1) if all elements are non-zero
+*==============================================================================
+$ENTRY TAll {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->all().to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TAllDim s.TensorID s.Dim> == s.TensorResult
+* All along dimension
+*==============================================================================
+$ENTRY TAllDim {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->all(dim).to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* CUMULATIVE OPERATIONS
+*==============================================================================
+
+*==============================================================================
+* <TCumsum s.TensorID s.Dim> == s.TensorResult
+* Cumulative sum along dimension
+*==============================================================================
+$ENTRY TCumsum {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->cumsum(dim);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TCumprod s.TensorID s.Dim> == s.TensorResult
+* Cumulative product along dimension
+*==============================================================================
+$ENTRY TCumprod {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->cumprod(dim);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TCummax s.TensorID s.Dim> == s.ValuesTensor s.IndicesTensor
+* Cumulative maximum along dimension
+*==============================================================================
+$ENTRY TCummax {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    auto [values, indices] = t->cummax(dim);
+    int values_id = tensor_storage::store(values);
+    int indices_id = tensor_storage::store(indices.to(torch::kFloat32));
+    
+    refalrts::reset_allocator(vm);
+    refalrts::Iter node1, node2;
+    refalrts::alloc_number(vm, node1, values_id);
+    refalrts::alloc_number(vm, node2, indices_id);
+    
+    refalrts::splice_evar(arg_begin, node1, node2);
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TCummin s.TensorID s.Dim> == s.ValuesTensor s.IndicesTensor
+* Cumulative minimum along dimension
+*==============================================================================
+$ENTRY TCummin {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    auto [values, indices] = t->cummin(dim);
+    int values_id = tensor_storage::store(values);
+    int indices_id = tensor_storage::store(indices.to(torch::kFloat32));
+    
+    refalrts::reset_allocator(vm);
+    refalrts::Iter node1, node2;
+    refalrts::alloc_number(vm, node1, values_id);
+    refalrts::alloc_number(vm, node2, indices_id);
+    
+    refalrts::splice_evar(arg_begin, node1, node2);
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* SORTING
+*==============================================================================
+
+*==============================================================================
+* <TSort s.TensorID s.Dim> == s.SortedTensor s.IndicesTensor
+* Sort along dimension, returns sorted values and indices
+*==============================================================================
+$ENTRY TSort {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    auto [sorted, indices] = t->sort(dim);
+    int sorted_id = tensor_storage::store(sorted);
+    int indices_id = tensor_storage::store(indices.to(torch::kFloat32));
+    
+    refalrts::reset_allocator(vm);
+    refalrts::Iter node1, node2;
+    refalrts::alloc_number(vm, node1, sorted_id);
+    refalrts::alloc_number(vm, node2, indices_id);
+    
+    refalrts::splice_evar(arg_begin, node1, node2);
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TSortDesc s.TensorID s.Dim> == s.SortedTensor s.IndicesTensor
+* Sort descending along dimension
+*==============================================================================
+$ENTRY TSortDesc {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    auto [sorted, indices] = t->sort(dim, /*descending=*/true);
+    int sorted_id = tensor_storage::store(sorted);
+    int indices_id = tensor_storage::store(indices.to(torch::kFloat32));
+    
+    refalrts::reset_allocator(vm);
+    refalrts::Iter node1, node2;
+    refalrts::alloc_number(vm, node1, sorted_id);
+    refalrts::alloc_number(vm, node2, indices_id);
+    
+    refalrts::splice_evar(arg_begin, node1, node2);
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TArgsort s.TensorID s.Dim> == s.IndicesTensor
+* Return indices that would sort the tensor
+*==============================================================================
+$ENTRY TArgsort {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = t->argsort(dim).to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TTopK s.TensorID s.K s.Dim> == s.ValuesTensor s.IndicesTensor
+* Return top-k elements along dimension
+*==============================================================================
+$ENTRY TTopK {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int k = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    auto [values, indices] = t->topk(k, dim);
+    int values_id = tensor_storage::store(values);
+    int indices_id = tensor_storage::store(indices.to(torch::kFloat32));
+    
+    refalrts::reset_allocator(vm);
+    refalrts::Iter node1, node2;
+    refalrts::alloc_number(vm, node1, values_id);
+    refalrts::alloc_number(vm, node2, indices_id);
+    
+    refalrts::splice_evar(arg_begin, node1, node2);
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* COUNTING
+*==============================================================================
+
+*==============================================================================
+* <TCountNonzero s.TensorID> == s.TensorResult
+* Count non-zero elements
+*==============================================================================
+$ENTRY TCountNonzero {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = torch::count_nonzero(*t).to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TCountNonzeroDim s.TensorID s.Dim> == s.TensorResult
+* Count non-zero elements along dimension
+*==============================================================================
+$ENTRY TCountNonzeroDim {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = torch::count_nonzero(*t, dim).to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}

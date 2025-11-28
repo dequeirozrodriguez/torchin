@@ -1,0 +1,101 @@
+* RefTorch.refi - Header file for RefTorch library
+*
+* Include this file to use RefTorch functions:
+*   $INCLUDE "RefTorch";
+*
+* Note: Values passed as scalars use fixed-point representation:
+*       Multiply floats by 1000 before passing (e.g., 1.5 -> 1500)
+*       Returned values are also multiplied by 1000
+
+*==============================================================================
+* TensorCore - Creation and Memory Management
+*==============================================================================
+
+* Creation functions
+$EXTERN TZeros;      /* <TZeros e.Shape> == s.TensorID */
+$EXTERN TOnes;       /* <TOnes e.Shape> == s.TensorID */
+$EXTERN TRand;       /* <TRand e.Shape> == s.TensorID */
+$EXTERN TRandn;      /* <TRandn e.Shape> == s.TensorID */
+$EXTERN TFull;       /* <TFull s.Value e.Shape> == s.TensorID */
+$EXTERN TEye;        /* <TEye s.N> == s.TensorID */
+$EXTERN TArange;     /* <TArange s.End> or <TArange s.Start s.End> or <TArange s.Start s.End s.Step> */
+$EXTERN TLinspace;   /* <TLinspace s.Start s.End s.Steps> == s.TensorID */
+$EXTERN TScalar;     /* <TScalar s.Value> == s.TensorID */
+
+* Memory management
+$EXTERN TClone;      /* <TClone s.TensorID> == s.NewTensorID */
+$EXTERN TFree;       /* <TFree s.TensorID> == empty */
+$EXTERN TFreeAll;    /* <TFreeAll> == empty */
+
+* Conversion
+$EXTERN TFromList;   /* <TFromList (e.Shape) e.Values> == s.TensorID */
+$EXTERN TToList;     /* <TToList s.TensorID> == e.Values (x1000) */
+$EXTERN TItem;       /* <TItem s.TensorID> == s.Value (x1000) */
+
+
+*==============================================================================
+* TensorInfo - Tensor Information and Queries
+*==============================================================================
+
+$EXTERN TPrint;      /* <TPrint s.TensorID> == empty */
+$EXTERN TPrintInfo;  /* <TPrintInfo s.TensorID> == empty */
+$EXTERN TShape;      /* <TShape s.TensorID> == e.Dimensions */
+$EXTERN TDim;        /* <TDim s.TensorID> == s.NumDimensions */
+$EXTERN TNumel;      /* <TNumel s.TensorID> == s.TotalElements */
+$EXTERN TSize;       /* <TSize s.TensorID s.Dimension> == s.SizeAlongDim */
+$EXTERN TExists;     /* <TExists s.TensorID> == 1 | 0 */
+$EXTERN TCount;      /* <TCount> == s.NumberOfTensors */
+$EXTERN TIsContiguous; /* <TIsContiguous s.TensorID> == 1 | 0 */
+
+
+*==============================================================================
+* TensorMath - Mathematical Operations
+*==============================================================================
+
+* Element-wise arithmetic
+$EXTERN TAdd;        /* <TAdd s.A s.B> == s.Result (A + B) */
+$EXTERN TSub;        /* <TSub s.A s.B> == s.Result (A - B) */
+$EXTERN TMul;        /* <TMul s.A s.B> == s.Result (A * B element-wise) */
+$EXTERN TDiv;        /* <TDiv s.A s.B> == s.Result (A / B) */
+
+* Scalar operations (scalar values divided by 1000)
+$EXTERN TAddScalar;  /* <TAddScalar s.T s.Scalar> == s.Result */
+$EXTERN TSubScalar;  /* <TSubScalar s.T s.Scalar> == s.Result */
+$EXTERN TMulScalar;  /* <TMulScalar s.T s.Scalar> == s.Result */
+$EXTERN TDivScalar;  /* <TDivScalar s.T s.Scalar> == s.Result */
+
+* Matrix operations
+$EXTERN TMatMul;     /* <TMatMul s.A s.B> == s.Result (A @ B) */
+$EXTERN TDot;        /* <TDot s.A s.B> == s.Result (dot product) */
+$EXTERN TMM;         /* <TMM s.A s.B> == s.Result (matrix multiply) */
+$EXTERN TMV;         /* <TMV s.M s.V> == s.Result (matrix-vector) */
+$EXTERN TOuterProduct; /* <TOuterProduct s.A s.B> == s.Result */
+
+* Unary operations
+$EXTERN TNeg;        /* <TNeg s.T> == s.Result (-T) */
+$EXTERN TAbs;        /* <TAbs s.T> == s.Result (|T|) */
+$EXTERN TSqrt;       /* <TSqrt s.T> == s.Result */
+$EXTERN TExp;        /* <TExp s.T> == s.Result (e^T) */
+$EXTERN TLog;        /* <TLog s.T> == s.Result (ln(T)) */
+$EXTERN TPow;        /* <TPow s.T s.Exp> == s.Result (T^exp, exp/1000) */
+$EXTERN TSquare;     /* <TSquare s.T> == s.Result (T^2) */
+$EXTERN TReciprocal; /* <TReciprocal s.T> == s.Result (1/T) */
+
+* Trigonometric
+$EXTERN TSin;        /* <TSin s.T> == s.Result */
+$EXTERN TCos;        /* <TCos s.T> == s.Result */
+$EXTERN TTan;        /* <TTan s.T> == s.Result */
+$EXTERN TTanh;       /* <TTanh s.T> == s.Result */
+$EXTERN TSigmoid;    /* <TSigmoid s.T> == s.Result (1/(1+e^-x)) */
+
+* Comparison (return 0/1 tensors)
+$EXTERN TEq;         /* <TEq s.A s.B> == s.Result (A == B) */
+$EXTERN TGt;         /* <TGt s.A s.B> == s.Result (A > B) */
+$EXTERN TLt;         /* <TLt s.A s.B> == s.Result (A < B) */
+$EXTERN TGe;         /* <TGe s.A s.B> == s.Result (A >= B) */
+$EXTERN TLe;         /* <TLe s.A s.B> == s.Result (A <= B) */
+
+* Other
+$EXTERN TClamp;      /* <TClamp s.T s.Min s.Max> == s.Result */
+$EXTERN TMax2;       /* <TMax2 s.A s.B> == s.Result (element-wise max) */
+$EXTERN TMin2;       /* <TMin2 s.A s.B> == s.Result (element-wise min) */

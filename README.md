@@ -1,3 +1,5 @@
+![Logo](logo.png)
+
 # RefTorch - libtorch Bindings for Refal-5λ
 
 RefTorch provides tensor computation capabilities to Refal-5λ by wrapping libtorch (PyTorch's C++ backend).

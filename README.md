@@ -2,7 +2,9 @@
 
 # RefTorch - libtorch Bindings for Refal-5λ
 
-RefTorch provides tensor computation capabilities to Refal-5λ by wrapping libtorch (PyTorch's C++ backend).
+RefTorch (aka Torchin) provides tensor computation capabilities to Refal-5λ by wrapping libtorch (PyTorch's C++ backend).
+
+Torchin is only a nickname to honor Valentin Turchin.
 
 ## Features
 

@@ -4,6 +4,7 @@
 
 A comprehensive tensor computation library bringing PyTorch's power to the Refal-5λ functional programming language.
 
+Torchin is a fond nickname for the lib in honor of Valentin Turchin.
 ## Overview
 
 RefTorch provides **250+ functions** for tensor operations, neural networks, and deep learning, seamlessly integrated with Refal-5λ's pattern-matching paradigm.

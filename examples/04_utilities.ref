@@ -1,0 +1,272 @@
+* 04_utilities.ref - Utilities Example
+*
+* This example demonstrates:
+* - Setting random seeds for reproducibility
+* - Saving and loading tensors
+* - Data type conversion
+* - Debugging utilities (NaN/Inf checking)
+* - System information
+
+$EXTERN TZeros, TOnes, TRand, TRandn, TFree, TFreeAll;
+$EXTERN TPrint, TPrintInfo, TCount;
+$EXTERN TAdd;
+
+* IO functions
+$EXTERN TSave, TLoad, TSaveText, TLoadText, TSaveCSV, TLoadCSV;
+$EXTERN TSaveBinary, TLoadBinary, TTensorToString, TFileExists;
+
+* Utility functions
+$EXTERN TSetSeed, TGetSeed, TRandomSeed;
+$EXTERN TCudaAvailable, TCudaDeviceCount, TGetDevice, TToCPU;
+$EXTERN TToFloat32, TToFloat64, TToInt32, TToInt64, TGetDtype;
+$EXTERN TEqual, TAllClose;
+$EXTERN TCheckNaN, TCheckInf, TCheckFinite, TReplaceNaN, TSummary;
+$EXTERN TVersion, TNumThreads, TSetNumThreads, TBenchmark;
+
+
+$ENTRY Go {
+  = <Main>;
+}
+
+Main {
+  = <Prout '=== RefTorch Phase 4: Utilities ==='>
+    <Prout ''>
+    <Example1-Seeds>
+    <Example2-SaveLoad>
+    <Example3-DataTypes>
+    <Example4-Comparison>
+    <Example5-Debugging>
+    <Example6-SystemInfo>
+    <Cleanup>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 1: Random Seeds
+*------------------------------------------------------------------------------
+Example1-Seeds {
+  = <Prout '--- Example 1: Random Seeds for Reproducibility ---'>
+    <Prout ''>
+    
+    <Prout 'Setting seed to 42...'>
+    <TSetSeed 42>
+    <Prout 'Random tensor with seed 42:'>
+    <PrintAndFree <TRand 2 3>>
+    
+    <Prout 'Setting seed to 42 again...'>
+    <TSetSeed 42>
+    <Prout 'Same random tensor (reproducible):'>
+    <PrintAndFree <TRand 2 3>>
+    
+    <Prout 'Different seed (123):'>
+    <TSetSeed 123>
+    <PrintAndFree <TRand 2 3>>
+    
+    <Prout 'Current seed: ' <TGetSeed>>
+    <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 2: Save and Load
+*------------------------------------------------------------------------------
+Example2-SaveLoad {
+  = <Prout '--- Example 2: Save and Load Tensors ---'>
+    <Prout ''>
+    <DoSaveLoad <TRand 3 4>>;
+}
+
+DoSaveLoad {
+  s.T = <Prout 'Original tensor:'>
+        <TPrint s.T>
+        
+        * Save in different formats
+        <Prout 'Saving to /tmp/test_tensor.pt (PyTorch format)...'>
+        <Prout 'Success: ' <TSave s.T '/tmp/test_tensor.pt'>>
+        
+        <Prout 'Saving to /tmp/test_tensor.txt (text format)...'>
+        <Prout 'Success: ' <TSaveText s.T '/tmp/test_tensor.txt'>>
+        
+        <Prout 'Saving to /tmp/test_tensor.bin (binary format)...'>
+        <Prout 'Success: ' <TSaveBinary s.T '/tmp/test_tensor.bin'>>
+        
+        <TFree s.T>
+        
+        * Load back
+        <Prout ''>
+        <Prout 'Loading from PyTorch format:'>
+        <PrintAndFree <TLoad '/tmp/test_tensor.pt'>>
+        
+        <Prout 'Loading from text format:'>
+        <PrintAndFree <TLoadText '/tmp/test_tensor.txt'>>
+        
+        <Prout 'Loading from binary format:'>
+        <PrintAndFree <TLoadBinary '/tmp/test_tensor.bin'>>
+        
+        <Prout 'File exists check: ' <TFileExists '/tmp/test_tensor.pt'>>
+        <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 3: Data Types
+*------------------------------------------------------------------------------
+Example3-DataTypes {
+  = <Prout '--- Example 3: Data Type Conversion ---'>
+    <Prout ''>
+    <DoDataTypes <TRand 2 2>>;
+}
+
+DoDataTypes {
+  s.T = <Prout 'Original (float32):'>
+        <TPrint s.T>
+        <Prout 'Dtype code: ' <TGetDtype s.T>>
+        
+        <Prout 'Converted to float64:'>
+        <DoShowDtype <TToFloat64 s.T>>
+        
+        <Prout 'Converted to int32:'>
+        <DoShowDtype <TToInt32 s.T>>
+        
+        <Prout 'Converted to int64:'>
+        <DoShowDtype <TToInt64 s.T>>
+        
+        <TFree s.T>
+        <Prout ''>;
+}
+
+DoShowDtype {
+  s.T = <TPrint s.T>
+        <Prout 'Dtype code: ' <TGetDtype s.T>>
+        <TFree s.T>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 4: Tensor Comparison
+*------------------------------------------------------------------------------
+Example4-Comparison {
+  = <Prout '--- Example 4: Tensor Comparison ---'>
+    <Prout ''>
+    <TSetSeed 42>
+    <DoCompare <TRand 2 2> <TRand 2 2>>;
+}
+
+DoCompare {
+  s.A s.B
+    = <Prout 'Tensor A:'>
+      <TPrint s.A>
+      <Prout 'Tensor B:'>
+      <TPrint s.B>
+      
+      <Prout 'A == B (exact): ' <TEqual s.A s.B>>
+      <Prout 'A allclose B: ' <TAllClose s.A s.B>>
+      
+      * Compare A with itself
+      <Prout 'A == A: ' <TEqual s.A s.A>>
+      
+      * Compare with small perturbation
+      <DoCompareClose s.A <TAdd s.A <TRand 2 2>>>
+      
+      <TFree s.A>
+      <TFree s.B>
+      <Prout ''>;
+}
+
+DoCompareClose {
+  s.A s.APlusNoise
+    = <Prout 'A with noise added - allclose (rtol=0.1): ' 
+        <TAllClose s.A s.APlusNoise 100000 0>>
+      <TFree s.APlusNoise>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 5: Debugging Utilities
+*------------------------------------------------------------------------------
+Example5-Debugging {
+  = <Prout '--- Example 5: Debugging (NaN/Inf Detection) ---'>
+    <Prout ''>
+    
+    <Prout 'Normal tensor:'>
+    <DoDebug <TRand 3 3>>
+    
+    <Prout 'Note: Creating NaN/Inf tensors requires special operations'>
+    <Prout '(division by zero, log of negative, etc.)'>
+    <Prout ''>
+    
+    <Prout 'Tensor summary example:'>
+    <DoSummary <TRandn 5 5>>
+    
+    <Prout ''>;
+}
+
+DoDebug {
+  s.T = <TPrint s.T>
+        <Prout 'Has NaN: ' <TCheckNaN s.T>>
+        <Prout 'Has Inf: ' <TCheckInf s.T>>
+        <Prout 'All finite: ' <TCheckFinite s.T>>
+        <TFree s.T>;
+}
+
+DoSummary {
+  s.T = <TPrint s.T>
+        <Prout 'Summary (min, max, mean, std, #nan, #inf):'>
+        <PrintSummary <TSummary s.T>>
+        <TFree s.T>;
+}
+
+PrintSummary {
+  (s.Min s.Max s.Mean s.Std s.NaN s.Inf)
+    = <Prout '  Min: ' s.Min '/1000'>
+      <Prout '  Max: ' s.Max '/1000'>
+      <Prout '  Mean: ' s.Mean '/1000'>
+      <Prout '  Std: ' s.Std '/1000'>
+      <Prout '  NaN count: ' s.NaN>
+      <Prout '  Inf count: ' s.Inf>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 6: System Information
+*------------------------------------------------------------------------------
+Example6-SystemInfo {
+  = <Prout '--- Example 6: System Information ---'>
+    <Prout ''>
+    
+    <Prout 'LibTorch version: ' <TVersion>>
+    <Prout 'CUDA available: ' <TCudaAvailable>>
+    <Prout 'CUDA device count: ' <TCudaDeviceCount>>
+    <Prout 'Number of threads: ' <TNumThreads>>
+    
+    <Prout ''>
+    <Prout 'Benchmarking tensor clone operation...'>
+    <DoBenchmark <TRand 100 100>>
+    
+    <Prout ''>;
+}
+
+DoBenchmark {
+  s.T = <Prout 'Tensor size: 100x100'>
+        <Prout 'Microseconds per clone (100 iterations): ' 
+               <TBenchmark s.T 100>>
+        <TFree s.T>;
+}
+
+
+*------------------------------------------------------------------------------
+* Helpers
+*------------------------------------------------------------------------------
+PrintAndFree {
+  s.T = <TPrint s.T> <TFree s.T>;
+}
+
+
+Cleanup {
+  = <Prout '--- Cleanup ---'>
+    <Prout 'Tensors before cleanup: ' <TCount>>
+    <TFreeAll>
+    <Prout 'Tensors after cleanup: ' <TCount>>
+    <Prout ''>
+    <Prout '=== Phase 4 Examples Complete ==='>
+}

@@ -54,6 +54,13 @@ SOURCES=(
     "$PROJECT_DIR/src/core/TensorCore.ref"
     "$PROJECT_DIR/src/core/TensorInfo.ref"
     "$PROJECT_DIR/src/ops/TensorMath.ref"
+    "$PROJECT_DIR/src/ops/TensorManip.ref"
+    "$PROJECT_DIR/src/ops/TensorReduce.ref"
+    "$PROJECT_DIR/src/nn/TensorNN.ref"
+    "$PROJECT_DIR/src/nn/TensorLoss.ref"
+    "$PROJECT_DIR/src/nn/TensorOptim.ref"
+    "$PROJECT_DIR/src/util/TensorIO.ref"
+    "$PROJECT_DIR/src/util/TensorUtil.ref"
 )
 
 # Add target file

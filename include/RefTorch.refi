@@ -99,3 +99,333 @@ $EXTERN TLe;         /* <TLe s.A s.B> == s.Result (A <= B) */
 $EXTERN TClamp;      /* <TClamp s.T s.Min s.Max> == s.Result */
 $EXTERN TMax2;       /* <TMax2 s.A s.B> == s.Result (element-wise max) */
 $EXTERN TMin2;       /* <TMin2 s.A s.B> == s.Result (element-wise min) */
+
+
+*==============================================================================
+* TensorManip - Shape Manipulation Operations
+*==============================================================================
+
+* Reshaping
+$EXTERN TReshape;    /* <TReshape s.T e.NewShape> == s.Result */
+$EXTERN TView;       /* <TView s.T e.NewShape> == s.Result (use -1 to infer) */
+$EXTERN TFlatten;    /* <TFlatten s.T> == s.Result (to 1D) */
+$EXTERN TFlattenRange; /* <TFlattenRange s.T s.Start s.End> == s.Result */
+
+* Transpose
+$EXTERN TTranspose;  /* <TTranspose s.T s.Dim0 s.Dim1> == s.Result */
+$EXTERN TT;          /* <TT s.T> == s.Result (2D matrix transpose) */
+$EXTERN TPermute;    /* <TPermute s.T e.Dims> == s.Result */
+$EXTERN TContiguous; /* <TContiguous s.T> == s.Result */
+
+* Dimension operations
+$EXTERN TSqueeze;    /* <TSqueeze s.T> == s.Result (remove size-1 dims) */
+$EXTERN TSqueezeDim; /* <TSqueezeDim s.T s.Dim> == s.Result */
+$EXTERN TUnsqueeze;  /* <TUnsqueeze s.T s.Dim> == s.Result (add dim) */
+
+* Combining tensors
+$EXTERN TCat;        /* <TCat s.Dim s.T1 s.T2 ...> == s.Result */
+$EXTERN TStack;      /* <TStack s.Dim s.T1 s.T2 ...> == s.Result */
+$EXTERN TVStack;     /* <TVStack s.T1 s.T2 ...> == s.Result */
+$EXTERN THStack;     /* <THStack s.T1 s.T2 ...> == s.Result */
+
+* Slicing and indexing
+$EXTERN TSlice;      /* <TSlice s.T s.Dim s.Start s.End> == s.Result */
+$EXTERN TNarrow;     /* <TNarrow s.T s.Dim s.Start s.Length> == s.Result */
+$EXTERN TSelect;     /* <TSelect s.T s.Dim s.Index> == s.Result */
+$EXTERN TIndexSelect; /* <TIndexSelect s.T s.Dim s.Indices> == s.Result */
+$EXTERN TGather;     /* <TGather s.T s.Dim s.Indices> == s.Result */
+
+* Splitting
+$EXTERN TSplit;      /* <TSplit s.T s.Size s.Dim> == s.T1 s.T2 ... */
+$EXTERN TChunk;      /* <TChunk s.T s.NumChunks s.Dim> == s.T1 s.T2 ... */
+
+* Repeating
+$EXTERN TRepeat;     /* <TRepeat s.T e.Repeats> == s.Result */
+$EXTERN TTile;       /* <TTile s.T e.Reps> == s.Result */
+
+* Flipping
+$EXTERN TFlip;       /* <TFlip s.T e.Dims> == s.Result */
+$EXTERN TFlipLR;     /* <TFlipLR s.T> == s.Result */
+$EXTERN TFlipUD;     /* <TFlipUD s.T> == s.Result */
+$EXTERN TRoll;       /* <TRoll s.T s.Shift s.Dim> == s.Result */
+
+
+*==============================================================================
+* TensorReduce - Reduction Operations
+*==============================================================================
+
+* Sum
+$EXTERN TSum;        /* <TSum s.T> == s.Result (sum all) */
+$EXTERN TSumDim;     /* <TSumDim s.T s.Dim> == s.Result */
+$EXTERN TSumDimKeep; /* <TSumDimKeep s.T s.Dim> == s.Result (keep dim) */
+
+* Mean
+$EXTERN TMean;       /* <TMean s.T> == s.Result */
+$EXTERN TMeanDim;    /* <TMeanDim s.T s.Dim> == s.Result */
+$EXTERN TMeanDimKeep; /* <TMeanDimKeep s.T s.Dim> == s.Result */
+
+* Product
+$EXTERN TProd;       /* <TProd s.T> == s.Result */
+$EXTERN TProdDim;    /* <TProdDim s.T s.Dim> == s.Result */
+
+* Max/Min
+$EXTERN TMax;        /* <TMax s.T> == s.Result (max of all) */
+$EXTERN TMaxDim;     /* <TMaxDim s.T s.Dim> == s.Values s.Indices */
+$EXTERN TMaxDimOnly; /* <TMaxDimOnly s.T s.Dim> == s.Result */
+$EXTERN TMin;        /* <TMin s.T> == s.Result */
+$EXTERN TMinDim;     /* <TMinDim s.T s.Dim> == s.Values s.Indices */
+$EXTERN TMinDimOnly; /* <TMinDimOnly s.T s.Dim> == s.Result */
+
+* Argmax/Argmin
+$EXTERN TArgmax;     /* <TArgmax s.T> == s.Result */
+$EXTERN TArgmaxDim;  /* <TArgmaxDim s.T s.Dim> == s.Result */
+$EXTERN TArgmin;     /* <TArgmin s.T> == s.Result */
+$EXTERN TArgminDim;  /* <TArgminDim s.T s.Dim> == s.Result */
+
+* Statistics
+$EXTERN TStd;        /* <TStd s.T> == s.Result */
+$EXTERN TStdDim;     /* <TStdDim s.T s.Dim> == s.Result */
+$EXTERN TVar;        /* <TVar s.T> == s.Result */
+$EXTERN TVarDim;     /* <TVarDim s.T s.Dim> == s.Result */
+$EXTERN TMedian;     /* <TMedian s.T> == s.Result */
+
+* Norms
+$EXTERN TNorm;       /* <TNorm s.T> == s.Result (Frobenius) */
+$EXTERN TNormP;      /* <TNormP s.T s.P> == s.Result (p/1000 norm) */
+$EXTERN TNormDim;    /* <TNormDim s.T s.P s.Dim> == s.Result */
+
+* Logical
+$EXTERN TAny;        /* <TAny s.T> == s.Result (any non-zero) */
+$EXTERN TAnyDim;     /* <TAnyDim s.T s.Dim> == s.Result */
+$EXTERN TAll;        /* <TAll s.T> == s.Result (all non-zero) */
+$EXTERN TAllDim;     /* <TAllDim s.T s.Dim> == s.Result */
+
+* Cumulative
+$EXTERN TCumsum;     /* <TCumsum s.T s.Dim> == s.Result */
+$EXTERN TCumprod;    /* <TCumprod s.T s.Dim> == s.Result */
+$EXTERN TCummax;     /* <TCummax s.T s.Dim> == s.Values s.Indices */
+$EXTERN TCummin;     /* <TCummin s.T s.Dim> == s.Values s.Indices */
+
+* Sorting
+$EXTERN TSort;       /* <TSort s.T s.Dim> == s.Sorted s.Indices */
+$EXTERN TSortDesc;   /* <TSortDesc s.T s.Dim> == s.Sorted s.Indices */
+$EXTERN TArgsort;    /* <TArgsort s.T s.Dim> == s.Indices */
+$EXTERN TTopK;       /* <TTopK s.T s.K s.Dim> == s.Values s.Indices */
+
+* Counting
+$EXTERN TCountNonzero;    /* <TCountNonzero s.T> == s.Result */
+$EXTERN TCountNonzeroDim; /* <TCountNonzeroDim s.T s.Dim> == s.Result */
+
+
+*==============================================================================
+* TensorNN - Neural Network Layers and Activations
+*==============================================================================
+
+* Training mode
+$EXTERN TSetTraining;    /* <TSetTraining s.Mode> == (1=train, 0=eval) */
+$EXTERN TIsTraining;     /* <TIsTraining> == s.Mode */
+
+* Activations
+$EXTERN TRelu;           /* <TRelu s.T> == s.Result */
+$EXTERN TRelu6;          /* <TRelu6 s.T> == s.Result */
+$EXTERN TLeakyRelu;      /* <TLeakyRelu s.T s.NegSlope> == s.Result */
+$EXTERN TElu;            /* <TElu s.T> == s.Result */
+$EXTERN TSelu;           /* <TSelu s.T> == s.Result */
+$EXTERN TGelu;           /* <TGelu s.T> == s.Result */
+$EXTERN TSilu;           /* <TSilu s.T> == s.Result (Swish) */
+$EXTERN TMish;           /* <TMish s.T> == s.Result */
+$EXTERN THardswish;      /* <THardswish s.T> == s.Result */
+$EXTERN TSoftplus;       /* <TSoftplus s.T> == s.Result */
+$EXTERN TSoftsign;       /* <TSoftsign s.T> == s.Result */
+$EXTERN TSoftmax;        /* <TSoftmax s.T s.Dim> == s.Result */
+$EXTERN TLogSoftmax;     /* <TLogSoftmax s.T s.Dim> == s.Result */
+$EXTERN THardtanh;       /* <THardtanh s.T s.Min s.Max> == s.Result */
+
+* Linear layers
+$EXTERN TLinear;         /* <TLinear s.Input s.Weight s.Bias> == s.Result */
+$EXTERN TLinearNoBias;   /* <TLinearNoBias s.Input s.Weight> == s.Result */
+$EXTERN TInitLinear;     /* <TInitLinear s.In s.Out> == s.Weight s.Bias */
+$EXTERN TInitLinearKaiming; /* <TInitLinearKaiming s.In s.Out> == s.W s.B */
+
+* Dropout
+$EXTERN TDropout;        /* <TDropout s.T s.P> == s.Result (p/1000) */
+$EXTERN TDropout2d;      /* <TDropout2d s.T s.P> == s.Result */
+
+* Normalization
+$EXTERN TLayerNorm;      /* <TLayerNorm s.Input e.Shape> == s.Result */
+$EXTERN TLayerNormAffine; /* <TLayerNormAffine s.In s.G s.B e.Shape> == s.R */
+$EXTERN TBatchNorm1d;    /* <TBatchNorm1d s.In s.Mean s.Var s.G s.B s.Mom s.Eps> */
+$EXTERN TInitBatchNorm;  /* <TInitBatchNorm s.NumFeatures> == s.Mean s.Var s.G s.B */
+
+* Pooling
+$EXTERN TMaxPool1d;      /* <TMaxPool1d s.T s.Kernel s.Stride> == s.Result */
+$EXTERN TAvgPool1d;      /* <TAvgPool1d s.T s.Kernel s.Stride> == s.Result */
+$EXTERN TMaxPool2d;      /* <TMaxPool2d s.T s.KH s.KW s.SH s.SW> == s.Result */
+$EXTERN TAvgPool2d;      /* <TAvgPool2d s.T s.KH s.KW s.SH s.SW> == s.Result */
+$EXTERN TAdaptiveAvgPool1d; /* <TAdaptiveAvgPool1d s.T s.OutSize> == s.Result */
+$EXTERN TAdaptiveAvgPool2d; /* <TAdaptiveAvgPool2d s.T s.OH s.OW> == s.Result */
+
+* Convolution
+$EXTERN TConv1d;         /* <TConv1d s.In s.W s.B s.Stride s.Pad> == s.Result */
+$EXTERN TConv2d;         /* <TConv2d s.In s.W s.B s.SH s.SW s.PH s.PW> == s.R */
+$EXTERN TInitConv2d;     /* <TInitConv2d s.InCh s.OutCh s.KH s.KW> == s.W s.B */
+
+* Embedding
+$EXTERN TEmbedding;      /* <TEmbedding s.Indices s.Table> == s.Result */
+$EXTERN TInitEmbedding;  /* <TInitEmbedding s.Vocab s.Dim> == s.Table */
+
+
+*==============================================================================
+* TensorLoss - Loss Functions
+*==============================================================================
+
+* Regression losses
+$EXTERN TMSE;            /* <TMSE s.Pred s.Target> == s.Loss */
+$EXTERN TMSESum;         /* <TMSESum s.Pred s.Target> == s.Loss */
+$EXTERN TMSENone;        /* <TMSENone s.Pred s.Target> == s.Loss (per-elem) */
+$EXTERN TMAE;            /* <TMAE s.Pred s.Target> == s.Loss (L1) */
+$EXTERN TSmoothL1;       /* <TSmoothL1 s.Pred s.Target> == s.Loss */
+$EXTERN THuber;          /* <THuber s.Pred s.Target s.Delta> == s.Loss */
+
+* Classification losses
+$EXTERN TCrossEntropy;   /* <TCrossEntropy s.Logits s.Targets> == s.Loss */
+$EXTERN TCrossEntropyWeighted; /* <TCrossEntropyWeighted s.L s.T s.W> == s.Loss */
+$EXTERN TNLL;            /* <TNLL s.LogProbs s.Targets> == s.Loss */
+$EXTERN TBinaryCrossEntropy; /* <TBinaryCrossEntropy s.Probs s.Targets> == s.L */
+$EXTERN TBCEWithLogits;  /* <TBCEWithLogits s.Logits s.Targets> == s.Loss */
+$EXTERN TBCEWithLogitsWeighted; /* <TBCEWithLogitsWeighted s.L s.T s.PW> == s.L */
+
+* Distribution losses
+$EXTERN TKLDiv;          /* <TKLDiv s.LogProbs s.TargetProbs> == s.Loss */
+
+* Margin losses
+$EXTERN THinge;          /* <THinge s.Pred s.Target> == s.Loss */
+$EXTERN TMarginRanking;  /* <TMarginRanking s.In1 s.In2 s.T s.Margin> == s.L */
+$EXTERN TTripletMargin;  /* <TTripletMargin s.Anc s.Pos s.Neg s.Margin> == s.L */
+
+* Similarity
+$EXTERN TCosineSimilarity; /* <TCosineSimilarity s.X1 s.X2 s.Dim> == s.Result */
+$EXTERN TCosineEmbedding;  /* <TCosineEmbedding s.X1 s.X2 s.T s.Margin> == s.L */
+$EXTERN TPairwiseDistance; /* <TPairwiseDistance s.X1 s.X2 s.P> == s.Result */
+
+* Special losses
+$EXTERN TCTCLoss;        /* <TCTCLoss s.LogP s.Targ s.InLen s.TargLen> == s.L */
+$EXTERN TMultiLabelMargin; /* <TMultiLabelMargin s.In s.Target> == s.Loss */
+$EXTERN TMultiLabelSoftMargin; /* <TMultiLabelSoftMargin s.In s.T> == s.L */
+$EXTERN TSoftMargin;     /* <TSoftMargin s.Input s.Target> == s.Loss */
+
+
+*==============================================================================
+* TensorOptim - Optimizers and Gradient Operations
+*==============================================================================
+
+* Gradient control
+$EXTERN TRequiresGrad;   /* <TRequiresGrad s.T s.Bool> == s.Result */
+$EXTERN TDetach;         /* <TDetach s.T> == s.Result */
+$EXTERN TGrad;           /* <TGrad s.T> == s.GradTensor */
+$EXTERN TSetGrad;        /* <TSetGrad s.T s.Grad> == */
+$EXTERN THasGrad;        /* <THasGrad s.T> == s.Bool */
+
+* Backward pass
+$EXTERN TBackward;       /* <TBackward s.Loss> == */
+$EXTERN TBackwardRetainGraph; /* <TBackwardRetainGraph s.Loss> == */
+$EXTERN TZeroGrad;       /* <TZeroGrad s.T> == */
+$EXTERN TZeroGradAll;    /* <TZeroGradAll e.Tensors> == */
+
+* Optimizers
+$EXTERN TUpdateSGD;      /* <TUpdateSGD s.Param s.LR> == */
+$EXTERN TUpdateSGDMomentum; /* <TUpdateSGDMomentum s.P s.LR s.Mom> == */
+$EXTERN TUpdateAdam;     /* <TUpdateAdam s.P s.LR s.B1 s.B2 s.Eps> == */
+$EXTERN TUpdateAdamW;    /* <TUpdateAdamW s.P s.LR s.B1 s.B2 s.Eps s.WD> == */
+$EXTERN TUpdateRMSprop;  /* <TUpdateRMSprop s.P s.LR s.Alpha s.Eps> == */
+
+* Gradient clipping
+$EXTERN TClipGradNorm;   /* <TClipGradNorm e.Tensors s.MaxNorm> == s.TotalNorm */
+$EXTERN TClipGradValue;  /* <TClipGradValue s.T s.MaxValue> == */
+
+* Optimizer state
+$EXTERN TResetOptimizerState; /* <TResetOptimizerState> == */
+$EXTERN TResetOptimizerStateFor; /* <TResetOptimizerStateFor s.T> == */
+
+* Inference
+$EXTERN TNoGrad;         /* <TNoGrad s.T> == s.Result */
+
+* Learning rate scheduling
+$EXTERN TLRStep;         /* <TLRStep s.LR s.StepSize s.Gamma s.Step> == s.NewLR */
+$EXTERN TLRCosine;       /* <TLRCosine s.InitLR s.MinLR s.Total s.Step> == s.LR */
+
+
+*==============================================================================
+* TensorIO - Save/Load and Serialization
+*==============================================================================
+
+* PyTorch format
+$EXTERN TSave;           /* <TSave s.T e.Filename> == s.Success */
+$EXTERN TLoad;           /* <TLoad e.Filename> == s.TensorID */
+$EXTERN TSaveMany;       /* <TSaveMany (s.T1 e.Name1) ... e.File> == s.Success */
+$EXTERN TLoadMany;       /* <TLoadMany e.Filename> == (s.T1) (s.T2) ... */
+
+* Text format
+$EXTERN TSaveText;       /* <TSaveText s.T e.Filename> == s.Success */
+$EXTERN TLoadText;       /* <TLoadText e.Filename> == s.TensorID */
+
+* CSV format
+$EXTERN TSaveCSV;        /* <TSaveCSV s.T e.Filename> == s.Success (2D only) */
+$EXTERN TLoadCSV;        /* <TLoadCSV e.Filename> == s.TensorID */
+
+* Binary format
+$EXTERN TSaveBinary;     /* <TSaveBinary s.T e.Filename> == s.Success */
+$EXTERN TLoadBinary;     /* <TLoadBinary e.Filename> == s.TensorID */
+
+* String conversion
+$EXTERN TTensorToString; /* <TTensorToString s.T> == e.String */
+
+* File utilities
+$EXTERN TFileExists;     /* <TFileExists e.Filename> == s.Bool */
+
+
+*==============================================================================
+* TensorUtil - Miscellaneous Utilities
+*==============================================================================
+
+* Random seed
+$EXTERN TSetSeed;        /* <TSetSeed s.Seed> == */
+$EXTERN TGetSeed;        /* <TGetSeed> == s.Seed */
+$EXTERN TRandomSeed;     /* <TRandomSeed> == s.Seed (generates random) */
+
+* Device info
+$EXTERN TCudaAvailable;  /* <TCudaAvailable> == s.Bool */
+$EXTERN TCudaDeviceCount; /* <TCudaDeviceCount> == s.Count */
+$EXTERN TGetDevice;      /* <TGetDevice s.T> == s.DeviceType (0=CPU,1=CUDA) */
+$EXTERN TToCPU;          /* <TToCPU s.T> == s.Result */
+$EXTERN TToCUDA;         /* <TToCUDA s.T> == s.Result */
+
+* Data type conversion
+$EXTERN TToFloat32;      /* <TToFloat32 s.T> == s.Result */
+$EXTERN TToFloat64;      /* <TToFloat64 s.T> == s.Result */
+$EXTERN TToInt32;        /* <TToInt32 s.T> == s.Result */
+$EXTERN TToInt64;        /* <TToInt64 s.T> == s.Result */
+$EXTERN TToBool;         /* <TToBool s.T> == s.Result */
+$EXTERN TGetDtype;       /* <TGetDtype s.T> == s.Code (0=f32,1=f64,2=i32...) */
+
+* Comparison
+$EXTERN TEqual;          /* <TEqual s.A s.B> == s.Bool (exact) */
+$EXTERN TAllClose;       /* <TAllClose s.A s.B s.RTol s.ATol> == s.Bool */
+
+* Debugging
+$EXTERN TCheckNaN;       /* <TCheckNaN s.T> == s.Bool (has NaN?) */
+$EXTERN TCheckInf;       /* <TCheckInf s.T> == s.Bool (has Inf?) */
+$EXTERN TCheckFinite;    /* <TCheckFinite s.T> == s.Bool (all finite?) */
+$EXTERN TReplaceNaN;     /* <TReplaceNaN s.T s.Value> == s.Result */
+$EXTERN TClampInf;       /* <TClampInf s.T s.Min s.Max> == s.Result */
+$EXTERN TSummary;        /* <TSummary s.T> == (s.Min s.Max s.Mean s.Std ...) */
+
+* Memory
+$EXTERN TEmptyCache;     /* <TEmptyCache> == */
+$EXTERN TMemoryInfo;     /* <TMemoryInfo> == (s.Allocated s.Cached) */
+
+* System info
+$EXTERN TVersion;        /* <TVersion> == e.VersionString */
+$EXTERN TNumThreads;     /* <TNumThreads> == s.Count */
+$EXTERN TSetNumThreads;  /* <TSetNumThreads s.Count> == */
+$EXTERN TBenchmark;      /* <TBenchmark s.T s.Iters> == s.MicrosPerOp */

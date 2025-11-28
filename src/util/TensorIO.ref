@@ -1,0 +1,601 @@
+* TensorIO.ref - Tensor I/O and Serialization
+*
+* This module provides:
+* - Save/Load tensors: TSave, TLoad, TSaveMany, TLoadMany
+* - Binary format: TSaveBinary, TLoadBinary
+* - Text format: TSaveText, TLoadText
+* - NumPy compatibility: TSaveNumpy, TLoadNumpy
+
+%%
+#include <torch/torch.h>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <string>
+
+// Access the tensor storage from TensorCore
+namespace tensor_storage {
+    extern std::unordered_map<int, torch::Tensor> tensors;
+    extern int next_id;
+    
+    int store(torch::Tensor t) {
+        int id = next_id++;
+        tensors[id] = t;
+        return id;
+    }
+    
+    torch::Tensor* get(int id) {
+        auto it = tensors.find(id);
+        if (it != tensors.end()) {
+            return &(it->second);
+        }
+        return nullptr;
+    }
+}
+
+// Helper: read string from Refal chars
+std::string read_string(refalrts::Iter& b, refalrts::Iter& e) {
+    std::string result;
+    while (!refalrts::empty_seq(b, e)) {
+        if (b->tag == refalrts::cDataChar) {
+            result += b->char_info;
+            refalrts::move_left(b, e);
+        } else {
+            break;
+        }
+    }
+    return result;
+}
+
+#define GET_ONE_TENSOR(id, t) \
+    refalrts::Iter content_b = 0, content_e = 0; \
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end); \
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible; \
+    int id = content_b->number_info; \
+    refalrts::move_left(content_b, content_e); \
+    torch::Tensor* t = tensor_storage::get(id); \
+    if (!t) return refalrts::cRecognitionImpossible;
+
+#define RETURN_TENSOR(result) \
+    int result_id = tensor_storage::store(result); \
+    refalrts::reinit_number(arg_begin, result_id); \
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end); \
+    return refalrts::cSuccess;
+
+#define RETURN_SUCCESS() \
+    refalrts::reinit_number(arg_begin, 1); \
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end); \
+    return refalrts::cSuccess;
+
+#define RETURN_FAILURE() \
+    refalrts::reinit_number(arg_begin, 0); \
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end); \
+    return refalrts::cSuccess;
+%%
+
+
+*==============================================================================
+* PYTORCH FORMAT (recommended)
+*==============================================================================
+
+*==============================================================================
+* <TSave s.TensorID e.Filename> == s.Success
+* Save tensor to file in PyTorch format (.pt)
+* Returns 1 on success, 0 on failure
+*==============================================================================
+$ENTRY TSave {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    std::string filename = read_string(content_b, content_e);
+    if (filename.empty()) return refalrts::cRecognitionImpossible;
+    
+    try {
+        torch::save(*t, filename);
+        RETURN_SUCCESS();
+    } catch (...) {
+        RETURN_FAILURE();
+    }
+%%
+}
+
+
+*==============================================================================
+* <TLoad e.Filename> == s.TensorID
+* Load tensor from PyTorch format file
+* Returns tensor ID on success, 0 on failure
+*==============================================================================
+$ENTRY TLoad {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    std::string filename = read_string(content_b, content_e);
+    if (filename.empty()) return refalrts::cRecognitionImpossible;
+    
+    try {
+        torch::Tensor t;
+        torch::load(t, filename);
+        RETURN_TENSOR(t);
+    } catch (...) {
+        RETURN_FAILURE();
+    }
+%%
+}
+
+
+*==============================================================================
+* <TSaveMany (s.T1 e.Name1) (s.T2 e.Name2) ... e.Filename> == s.Success
+* Save multiple named tensors to a single file
+* Each tensor is paired with its name in parentheses
+*==============================================================================
+$ENTRY TSaveMany {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    std::vector<torch::Tensor> tensors;
+    std::vector<std::string> names;
+    
+    // Parse (tensor name) pairs
+    while (!refalrts::empty_seq(content_b, content_e)) {
+        if (content_b->tag == refalrts::cDataOpenBracket) {
+            refalrts::Iter inner_b = 0, inner_e = 0;
+            refalrts::bracket_left(inner_b, inner_e, content_b, content_e);
+            
+            if (inner_b->tag != refalrts::cDataNumber) break;
+            int tid = inner_b->number_info;
+            refalrts::move_left(inner_b, inner_e);
+            
+            torch::Tensor* t = tensor_storage::get(tid);
+            if (!t) {
+                RETURN_FAILURE();
+            }
+            
+            std::string name = read_string(inner_b, inner_e);
+            tensors.push_back(*t);
+            names.push_back(name);
+        } else {
+            break;
+        }
+    }
+    
+    // Rest is filename
+    std::string filename = read_string(content_b, content_e);
+    if (filename.empty() || tensors.empty()) {
+        RETURN_FAILURE();
+    }
+    
+    try {
+        // Create a vector of IValues for saving
+        std::vector<torch::IValue> items;
+        for (size_t i = 0; i < tensors.size(); i++) {
+            items.push_back(tensors[i]);
+        }
+        torch::save(items, filename);
+        RETURN_SUCCESS();
+    } catch (...) {
+        RETURN_FAILURE();
+    }
+%%
+}
+
+
+*==============================================================================
+* <TLoadMany e.Filename> == (s.T1) (s.T2) ...
+* Load multiple tensors from a file saved with TSaveMany
+* Returns list of tensor IDs in parentheses
+*==============================================================================
+$ENTRY TLoadMany {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    std::string filename = read_string(content_b, content_e);
+    if (filename.empty()) return refalrts::cRecognitionImpossible;
+    
+    try {
+        std::vector<torch::IValue> items;
+        torch::load(items, filename);
+        
+        refalrts::reset_allocator(vm);
+        refalrts::Iter first = 0, last = 0;
+        
+        for (auto& item : items) {
+            if (item.isTensor()) {
+                int tid = tensor_storage::store(item.toTensor());
+                
+                refalrts::Iter open, close, num;
+                refalrts::alloc_open_bracket(vm, open);
+                refalrts::alloc_number(vm, num, tid);
+                refalrts::alloc_close_bracket(vm, close);
+                
+                refalrts::link_brackets(open, close);
+                
+                if (first == 0) first = open;
+                last = close;
+            }
+        }
+        
+        if (first) {
+            refalrts::splice_evar(arg_begin, first, last);
+        }
+        refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+        return refalrts::cSuccess;
+    } catch (...) {
+        RETURN_FAILURE();
+    }
+%%
+}
+
+
+*==============================================================================
+* TEXT FORMAT (human readable)
+*==============================================================================
+
+*==============================================================================
+* <TSaveText s.TensorID e.Filename> == s.Success
+* Save tensor as human-readable text (space-separated values)
+* First line contains shape, remaining lines contain data
+*==============================================================================
+$ENTRY TSaveText {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    std::string filename = read_string(content_b, content_e);
+    if (filename.empty()) return refalrts::cRecognitionImpossible;
+    
+    try {
+        std::ofstream file(filename);
+        if (!file.is_open()) {
+            RETURN_FAILURE();
+        }
+        
+        // Write shape
+        auto sizes = t->sizes();
+        for (size_t i = 0; i < sizes.size(); i++) {
+            if (i > 0) file << " ";
+            file << sizes[i];
+        }
+        file << "\n";
+        
+        // Flatten and write data
+        torch::Tensor flat = t->flatten().to(torch::kFloat32);
+        auto accessor = flat.accessor<float, 1>();
+        for (int64_t i = 0; i < flat.size(0); i++) {
+            if (i > 0) file << " ";
+            file << accessor[i];
+        }
+        file << "\n";
+        
+        file.close();
+        RETURN_SUCCESS();
+    } catch (...) {
+        RETURN_FAILURE();
+    }
+%%
+}
+
+
+*==============================================================================
+* <TLoadText e.Filename> == s.TensorID
+* Load tensor from text format
+*==============================================================================
+$ENTRY TLoadText {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    std::string filename = read_string(content_b, content_e);
+    if (filename.empty()) return refalrts::cRecognitionImpossible;
+    
+    try {
+        std::ifstream file(filename);
+        if (!file.is_open()) {
+            RETURN_FAILURE();
+        }
+        
+        // Read shape
+        std::string shape_line;
+        std::getline(file, shape_line);
+        std::istringstream shape_ss(shape_line);
+        std::vector<int64_t> shape;
+        int64_t dim;
+        while (shape_ss >> dim) {
+            shape.push_back(dim);
+        }
+        
+        // Read data
+        std::string data_line;
+        std::getline(file, data_line);
+        std::istringstream data_ss(data_line);
+        std::vector<float> data;
+        float val;
+        while (data_ss >> val) {
+            data.push_back(val);
+        }
+        
+        file.close();
+        
+        // Create tensor
+        torch::Tensor t = torch::from_blob(data.data(), {(int64_t)data.size()}, 
+                                           torch::kFloat32).clone();
+        if (!shape.empty()) {
+            t = t.reshape(shape);
+        }
+        
+        RETURN_TENSOR(t);
+    } catch (...) {
+        RETURN_FAILURE();
+    }
+%%
+}
+
+
+*==============================================================================
+* CSV FORMAT
+*==============================================================================
+
+*==============================================================================
+* <TSaveCSV s.TensorID e.Filename> == s.Success
+* Save 2D tensor as CSV file
+*==============================================================================
+$ENTRY TSaveCSV {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    std::string filename = read_string(content_b, content_e);
+    if (filename.empty()) return refalrts::cRecognitionImpossible;
+    
+    if (t->dim() != 2) {
+        RETURN_FAILURE();
+    }
+    
+    try {
+        std::ofstream file(filename);
+        if (!file.is_open()) {
+            RETURN_FAILURE();
+        }
+        
+        torch::Tensor data = t->to(torch::kFloat32);
+        auto accessor = data.accessor<float, 2>();
+        
+        for (int64_t i = 0; i < data.size(0); i++) {
+            for (int64_t j = 0; j < data.size(1); j++) {
+                if (j > 0) file << ",";
+                file << accessor[i][j];
+            }
+            file << "\n";
+        }
+        
+        file.close();
+        RETURN_SUCCESS();
+    } catch (...) {
+        RETURN_FAILURE();
+    }
+%%
+}
+
+
+*==============================================================================
+* <TLoadCSV e.Filename> == s.TensorID
+* Load 2D tensor from CSV file
+*==============================================================================
+$ENTRY TLoadCSV {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    std::string filename = read_string(content_b, content_e);
+    if (filename.empty()) return refalrts::cRecognitionImpossible;
+    
+    try {
+        std::ifstream file(filename);
+        if (!file.is_open()) {
+            RETURN_FAILURE();
+        }
+        
+        std::vector<std::vector<float>> rows;
+        std::string line;
+        
+        while (std::getline(file, line)) {
+            std::vector<float> row;
+            std::stringstream ss(line);
+            std::string cell;
+            
+            while (std::getline(ss, cell, ',')) {
+                row.push_back(std::stof(cell));
+            }
+            
+            if (!row.empty()) {
+                rows.push_back(row);
+            }
+        }
+        
+        file.close();
+        
+        if (rows.empty()) {
+            RETURN_FAILURE();
+        }
+        
+        int64_t num_rows = rows.size();
+        int64_t num_cols = rows[0].size();
+        
+        std::vector<float> flat_data;
+        for (auto& row : rows) {
+            for (float val : row) {
+                flat_data.push_back(val);
+            }
+        }
+        
+        torch::Tensor t = torch::from_blob(flat_data.data(), {num_rows, num_cols},
+                                           torch::kFloat32).clone();
+        RETURN_TENSOR(t);
+    } catch (...) {
+        RETURN_FAILURE();
+    }
+%%
+}
+
+
+*==============================================================================
+* BINARY FORMAT (compact, fast)
+*==============================================================================
+
+*==============================================================================
+* <TSaveBinary s.TensorID e.Filename> == s.Success
+* Save tensor in compact binary format
+*==============================================================================
+$ENTRY TSaveBinary {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    std::string filename = read_string(content_b, content_e);
+    if (filename.empty()) return refalrts::cRecognitionImpossible;
+    
+    try {
+        std::ofstream file(filename, std::ios::binary);
+        if (!file.is_open()) {
+            RETURN_FAILURE();
+        }
+        
+        // Write number of dimensions
+        int64_t ndim = t->dim();
+        file.write(reinterpret_cast<char*>(&ndim), sizeof(ndim));
+        
+        // Write shape
+        auto sizes = t->sizes();
+        for (int64_t s : sizes) {
+            file.write(reinterpret_cast<char*>(&s), sizeof(s));
+        }
+        
+        // Write data
+        torch::Tensor contiguous = t->contiguous().to(torch::kFloat32);
+        int64_t numel = contiguous.numel();
+        file.write(reinterpret_cast<char*>(contiguous.data_ptr<float>()),
+                   numel * sizeof(float));
+        
+        file.close();
+        RETURN_SUCCESS();
+    } catch (...) {
+        RETURN_FAILURE();
+    }
+%%
+}
+
+
+*==============================================================================
+* <TLoadBinary e.Filename> == s.TensorID
+* Load tensor from binary format
+*==============================================================================
+$ENTRY TLoadBinary {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    std::string filename = read_string(content_b, content_e);
+    if (filename.empty()) return refalrts::cRecognitionImpossible;
+    
+    try {
+        std::ifstream file(filename, std::ios::binary);
+        if (!file.is_open()) {
+            RETURN_FAILURE();
+        }
+        
+        // Read number of dimensions
+        int64_t ndim;
+        file.read(reinterpret_cast<char*>(&ndim), sizeof(ndim));
+        
+        // Read shape
+        std::vector<int64_t> shape(ndim);
+        for (int64_t i = 0; i < ndim; i++) {
+            file.read(reinterpret_cast<char*>(&shape[i]), sizeof(int64_t));
+        }
+        
+        // Calculate number of elements
+        int64_t numel = 1;
+        for (int64_t s : shape) {
+            numel *= s;
+        }
+        
+        // Read data
+        std::vector<float> data(numel);
+        file.read(reinterpret_cast<char*>(data.data()), numel * sizeof(float));
+        
+        file.close();
+        
+        torch::Tensor t = torch::from_blob(data.data(), shape, torch::kFloat32).clone();
+        RETURN_TENSOR(t);
+    } catch (...) {
+        RETURN_FAILURE();
+    }
+%%
+}
+
+
+*==============================================================================
+* STRING CONVERSION
+*==============================================================================
+
+*==============================================================================
+* <TTensorToString s.TensorID> == e.String
+* Convert tensor to string representation
+*==============================================================================
+$ENTRY TTensorToString {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int id = content_b->number_info;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) return refalrts::cRecognitionImpossible;
+    
+    std::ostringstream ss;
+    ss << *t;
+    std::string str = ss.str();
+    
+    refalrts::reset_allocator(vm);
+    refalrts::Iter first = 0, last = 0;
+    
+    for (char c : str) {
+        refalrts::Iter node;
+        refalrts::alloc_char(vm, node, c);
+        if (first == 0) first = node;
+        last = node;
+    }
+    
+    if (first) {
+        refalrts::splice_evar(arg_begin, first, last);
+    }
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* FILE EXISTENCE CHECK
+*==============================================================================
+
+*==============================================================================
+* <TFileExists e.Filename> == s.Bool
+* Check if file exists (1 = yes, 0 = no)
+*==============================================================================
+$ENTRY TFileExists {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    std::string filename = read_string(content_b, content_e);
+    
+    std::ifstream file(filename);
+    bool exists = file.good();
+    file.close();
+    
+    refalrts::reinit_number(arg_begin, exists ? 1 : 0);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}

@@ -1,0 +1,552 @@
+* TensorLoss.ref - Loss Functions
+*
+* This module provides common loss functions:
+* - Regression: TMSE, TMAE, THuber, TSmoothL1
+* - Classification: TCrossEntropy, TNLL, TBinaryCrossEntropy
+* - Other: TKLDiv, TCosineEmbedding, THinge
+
+%%
+#include <torch/torch.h>
+
+// Access the tensor storage from TensorCore
+namespace tensor_storage {
+    extern std::unordered_map<int, torch::Tensor> tensors;
+    extern int next_id;
+    
+    int store(torch::Tensor t) {
+        int id = next_id++;
+        tensors[id] = t;
+        return id;
+    }
+    
+    torch::Tensor* get(int id) {
+        auto it = tensors.find(id);
+        if (it != tensors.end()) {
+            return &(it->second);
+        }
+        return nullptr;
+    }
+}
+
+#define GET_TWO_TENSORS(id1, t1, id2, t2) \
+    refalrts::Iter content_b = 0, content_e = 0; \
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end); \
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible; \
+    int id1 = content_b->number_info; \
+    refalrts::move_left(content_b, content_e); \
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible; \
+    int id2 = content_b->number_info; \
+    refalrts::move_left(content_b, content_e); \
+    torch::Tensor* t1 = tensor_storage::get(id1); \
+    torch::Tensor* t2 = tensor_storage::get(id2); \
+    if (!t1 || !t2) return refalrts::cRecognitionImpossible;
+
+#define RETURN_TENSOR(result) \
+    int result_id = tensor_storage::store(result); \
+    refalrts::reinit_number(arg_begin, result_id); \
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end); \
+    return refalrts::cSuccess;
+%%
+
+
+*==============================================================================
+* REGRESSION LOSSES
+*==============================================================================
+
+*==============================================================================
+* <TMSE s.Predicted s.Target> == s.Loss
+* Mean Squared Error: mean((pred - target)^2)
+*==============================================================================
+$ENTRY TMSE {
+%%
+    GET_TWO_TENSORS(pred_id, pred, target_id, target);
+    torch::Tensor result = torch::mse_loss(*pred, *target);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMSESum s.Predicted s.Target> == s.Loss
+* MSE with sum reduction instead of mean
+*==============================================================================
+$ENTRY TMSESum {
+%%
+    GET_TWO_TENSORS(pred_id, pred, target_id, target);
+    torch::Tensor result = torch::mse_loss(*pred, *target, torch::Reduction::Sum);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMSENone s.Predicted s.Target> == s.Loss
+* MSE with no reduction (returns per-element loss)
+*==============================================================================
+$ENTRY TMSENone {
+%%
+    GET_TWO_TENSORS(pred_id, pred, target_id, target);
+    torch::Tensor result = torch::mse_loss(*pred, *target, torch::Reduction::None);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMAE s.Predicted s.Target> == s.Loss
+* Mean Absolute Error (L1 Loss): mean(|pred - target|)
+*==============================================================================
+$ENTRY TMAE {
+%%
+    GET_TWO_TENSORS(pred_id, pred, target_id, target);
+    torch::Tensor result = torch::l1_loss(*pred, *target);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TSmoothL1 s.Predicted s.Target> == s.Loss
+* Smooth L1 Loss (Huber loss with delta=1)
+* Less sensitive to outliers than MSE
+*==============================================================================
+$ENTRY TSmoothL1 {
+%%
+    GET_TWO_TENSORS(pred_id, pred, target_id, target);
+    torch::Tensor result = torch::smooth_l1_loss(*pred, *target);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <THuber s.Predicted s.Target s.Delta> == s.Loss
+* Huber Loss with custom delta (delta divided by 1000)
+*==============================================================================
+$ENTRY THuber {
+%%
+    GET_TWO_TENSORS(pred_id, pred, target_id, target);
+    
+    float delta = 1.0f;
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        delta = content_b->number_info / 1000.0f;
+    }
+    
+    torch::Tensor result = torch::huber_loss(*pred, *target, torch::Reduction::Mean, delta);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* CLASSIFICATION LOSSES
+*==============================================================================
+
+*==============================================================================
+* <TCrossEntropy s.Logits s.Targets> == s.Loss
+* Cross-entropy loss for classification
+* Logits: (N, C) raw scores (not softmaxed)
+* Targets: (N,) class indices (integers)
+*==============================================================================
+$ENTRY TCrossEntropy {
+%%
+    GET_TWO_TENSORS(logits_id, logits, targets_id, targets);
+    torch::Tensor result = torch::cross_entropy_loss(*logits, targets->to(torch::kLong));
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TCrossEntropyWeighted s.Logits s.Targets s.Weights> == s.Loss
+* Cross-entropy with class weights
+*==============================================================================
+$ENTRY TCrossEntropyWeighted {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int logits_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int targets_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int weights_id = content_b->number_info;
+    
+    torch::Tensor* logits = tensor_storage::get(logits_id);
+    torch::Tensor* targets = tensor_storage::get(targets_id);
+    torch::Tensor* weights = tensor_storage::get(weights_id);
+    
+    if (!logits || !targets || !weights) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = torch::cross_entropy_loss(*logits, targets->to(torch::kLong),
+                                                      *weights);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TNLL s.LogProbs s.Targets> == s.Loss
+* Negative Log Likelihood Loss
+* LogProbs: (N, C) log probabilities (output of log_softmax)
+* Targets: (N,) class indices
+*==============================================================================
+$ENTRY TNLL {
+%%
+    GET_TWO_TENSORS(logprobs_id, logprobs, targets_id, targets);
+    torch::Tensor result = torch::nll_loss(*logprobs, targets->to(torch::kLong));
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TBinaryCrossEntropy s.Probs s.Targets> == s.Loss
+* Binary Cross-Entropy (for probabilities in [0,1])
+* Probs: (N,) predicted probabilities
+* Targets: (N,) binary targets (0 or 1)
+*==============================================================================
+$ENTRY TBinaryCrossEntropy {
+%%
+    GET_TWO_TENSORS(probs_id, probs, targets_id, targets);
+    torch::Tensor result = torch::binary_cross_entropy(*probs, *targets);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TBCEWithLogits s.Logits s.Targets> == s.Loss
+* Binary Cross-Entropy with Logits (more numerically stable)
+* Logits: (N,) raw scores
+* Targets: (N,) binary targets
+*==============================================================================
+$ENTRY TBCEWithLogits {
+%%
+    GET_TWO_TENSORS(logits_id, logits, targets_id, targets);
+    torch::Tensor result = torch::binary_cross_entropy_with_logits(*logits, *targets);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TBCEWithLogitsWeighted s.Logits s.Targets s.PosWeight> == s.Loss
+* BCE with logits and positive class weight
+*==============================================================================
+$ENTRY TBCEWithLogitsWeighted {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int logits_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int targets_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int pos_weight_id = content_b->number_info;
+    
+    torch::Tensor* logits = tensor_storage::get(logits_id);
+    torch::Tensor* targets = tensor_storage::get(targets_id);
+    torch::Tensor* pos_weight = tensor_storage::get(pos_weight_id);
+    
+    if (!logits || !targets || !pos_weight) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = torch::binary_cross_entropy_with_logits(
+        *logits, *targets, {}, {}, torch::Reduction::Mean, *pos_weight);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* DISTRIBUTION LOSSES
+*==============================================================================
+
+*==============================================================================
+* <TKLDiv s.LogProbs s.TargetProbs> == s.Loss
+* KL Divergence: sum(target * (log(target) - log_input))
+* LogProbs: (N, C) log probabilities
+* TargetProbs: (N, C) target probability distribution
+*==============================================================================
+$ENTRY TKLDiv {
+%%
+    GET_TWO_TENSORS(logprobs_id, logprobs, target_id, target);
+    torch::Tensor result = torch::kl_div(*logprobs, *target, torch::Reduction::Mean);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* MARGIN LOSSES
+*==============================================================================
+
+*==============================================================================
+* <THinge s.Predictions s.Targets> == s.Loss
+* Hinge Loss (for SVM-style classification)
+* Targets should be -1 or 1
+*==============================================================================
+$ENTRY THinge {
+%%
+    GET_TWO_TENSORS(pred_id, pred, target_id, target);
+    torch::Tensor result = torch::hinge_embedding_loss(*pred, *target);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMarginRanking s.Input1 s.Input2 s.Target s.Margin> == s.Loss
+* Margin Ranking Loss
+* Target: 1 if input1 should rank higher, -1 otherwise
+* Margin divided by 1000
+*==============================================================================
+$ENTRY TMarginRanking {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int input1_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int input2_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int target_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    float margin = 0.0f;
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        margin = content_b->number_info / 1000.0f;
+    }
+    
+    torch::Tensor* input1 = tensor_storage::get(input1_id);
+    torch::Tensor* input2 = tensor_storage::get(input2_id);
+    torch::Tensor* target = tensor_storage::get(target_id);
+    
+    if (!input1 || !input2 || !target) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = torch::margin_ranking_loss(*input1, *input2, *target, margin);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TTripletMargin s.Anchor s.Positive s.Negative s.Margin> == s.Loss
+* Triplet Margin Loss for embedding learning
+* Margin divided by 1000
+*==============================================================================
+$ENTRY TTripletMargin {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int anchor_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int positive_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int negative_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    float margin = 1.0f;
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        margin = content_b->number_info / 1000.0f;
+    }
+    
+    torch::Tensor* anchor = tensor_storage::get(anchor_id);
+    torch::Tensor* positive = tensor_storage::get(positive_id);
+    torch::Tensor* negative = tensor_storage::get(negative_id);
+    
+    if (!anchor || !positive || !negative) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = torch::triplet_margin_loss(*anchor, *positive, *negative, margin);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* SIMILARITY LOSSES
+*==============================================================================
+
+*==============================================================================
+* <TCosineSimilarity s.X1 s.X2 s.Dim> == s.TensorResult
+* Cosine similarity between two tensors
+*==============================================================================
+$ENTRY TCosineSimilarity {
+%%
+    GET_TWO_TENSORS(x1_id, x1, x2_id, x2);
+    
+    int dim = 1;
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        dim = content_b->number_info;
+    }
+    
+    torch::Tensor result = torch::cosine_similarity(*x1, *x2, dim);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TCosineEmbedding s.X1 s.X2 s.Target s.Margin> == s.Loss
+* Cosine Embedding Loss
+* Target: 1 if similar, -1 if dissimilar
+*==============================================================================
+$ENTRY TCosineEmbedding {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int x1_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int x2_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int target_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    float margin = 0.0f;
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        margin = content_b->number_info / 1000.0f;
+    }
+    
+    torch::Tensor* x1 = tensor_storage::get(x1_id);
+    torch::Tensor* x2 = tensor_storage::get(x2_id);
+    torch::Tensor* target = tensor_storage::get(target_id);
+    
+    if (!x1 || !x2 || !target) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = torch::cosine_embedding_loss(*x1, *x2, *target, margin);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TPairwiseDistance s.X1 s.X2 s.P> == s.TensorResult
+* Pairwise distance between batched vectors
+* P is the norm degree (divided by 1000)
+*==============================================================================
+$ENTRY TPairwiseDistance {
+%%
+    GET_TWO_TENSORS(x1_id, x1, x2_id, x2);
+    
+    float p = 2.0f;
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        p = content_b->number_info / 1000.0f;
+    }
+    
+    torch::Tensor result = torch::pairwise_distance(*x1, *x2, p);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* SPECIAL LOSSES
+*==============================================================================
+
+*==============================================================================
+* <TCTCLoss s.LogProbs s.Targets s.InputLengths s.TargetLengths> == s.Loss
+* Connectionist Temporal Classification Loss (for sequence-to-sequence)
+* LogProbs: (T, N, C) - T=time, N=batch, C=classes (including blank)
+*==============================================================================
+$ENTRY TCTCLoss {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int logprobs_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int targets_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int input_lengths_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int target_lengths_id = content_b->number_info;
+    
+    torch::Tensor* logprobs = tensor_storage::get(logprobs_id);
+    torch::Tensor* targets = tensor_storage::get(targets_id);
+    torch::Tensor* input_lengths = tensor_storage::get(input_lengths_id);
+    torch::Tensor* target_lengths = tensor_storage::get(target_lengths_id);
+    
+    if (!logprobs || !targets || !input_lengths || !target_lengths) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor result = torch::ctc_loss(
+        *logprobs, targets->to(torch::kLong),
+        input_lengths->to(torch::kLong), target_lengths->to(torch::kLong)
+    );
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMultiLabelMargin s.Input s.Target> == s.Loss
+* Multi-label margin loss
+*==============================================================================
+$ENTRY TMultiLabelMargin {
+%%
+    GET_TWO_TENSORS(input_id, input, target_id, target);
+    torch::Tensor result = torch::multilabel_margin_loss(*input, target->to(torch::kLong));
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMultiLabelSoftMargin s.Input s.Target> == s.Loss
+* Multi-label soft margin loss (sigmoid + BCE)
+*==============================================================================
+$ENTRY TMultiLabelSoftMargin {
+%%
+    GET_TWO_TENSORS(input_id, input, target_id, target);
+    torch::Tensor result = torch::multilabel_soft_margin_loss(*input, *target);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TSoftMargin s.Input s.Target> == s.Loss
+* Soft margin loss for binary classification
+*==============================================================================
+$ENTRY TSoftMargin {
+%%
+    GET_TWO_TENSORS(input_id, input, target_id, target);
+    torch::Tensor result = torch::soft_margin_loss(*input, *target);
+    RETURN_TENSOR(result);
+%%
+}

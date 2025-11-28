@@ -1,0 +1,309 @@
+* 02_manip_reduce.ref - Tensor manipulation and reduction examples
+*
+* This example demonstrates:
+* - Reshaping and transposing tensors
+* - Concatenating and stacking
+* - Reduction operations (sum, mean, max, etc.)
+* - Sorting and statistics
+
+$EXTERN TZeros, TOnes, TRand, TFree, TFreeAll, TArange, TFromList;
+$EXTERN TPrint, TPrintInfo, TShape, TDim, TNumel, TCount, TItem;
+$EXTERN TAdd, TMatMul;
+
+* Manipulation functions
+$EXTERN TReshape, TView, TFlatten, TTranspose, TT, TPermute;
+$EXTERN TSqueeze, TUnsqueeze, TCat, TStack, TVStack, THStack;
+$EXTERN TSlice, TSelect, TSplit, TRepeat, TFlip, TFlipLR;
+
+* Reduction functions
+$EXTERN TSum, TSumDim, TMean, TMeanDim, TProd;
+$EXTERN TMax, TMin, TMaxDim, TMinDim, TArgmax, TArgmaxDim;
+$EXTERN TStd, TVar, TNorm;
+$EXTERN TAny, TAll, TCumsum;
+$EXTERN TSort, TArgsort, TTopK;
+
+
+$ENTRY Go {
+  = <Main>;
+}
+
+Main {
+  = <Prout '=== RefTorch Phase 2: Manipulation & Reduction ==='>
+    <Prout ''>
+    <Example1-Reshape>
+    <Example2-Transpose>
+    <Example3-Combine>
+    <Example4-Slice>
+    <Example5-Reduce>
+    <Example6-Statistics>
+    <Example7-Sort>
+    <Cleanup>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 1: Reshaping
+*------------------------------------------------------------------------------
+Example1-Reshape {
+  = <Prout '--- Example 1: Reshaping ---'>
+    <Prout ''>
+    <DoReshape <TArange 12>>;
+}
+
+DoReshape {
+  s.T = <Prout 'Original 1D tensor (0-11):'>
+        <TPrint s.T>
+        
+        <Prout 'Reshaped to 3x4:'>
+        <PrintAndFree <TReshape s.T 3 4>>
+        
+        <Prout 'Reshaped to 2x2x3:'>
+        <PrintAndFree <TReshape s.T 2 2 3>>
+        
+        <Prout 'View with -1 (infer): 4x-1 = 4x3:'>
+        <PrintAndFree <TView s.T 4 -1>>
+        
+        <Prout 'Flattened back to 1D:'>
+        <DoFlatten <TReshape s.T 3 4>>
+        
+        <TFree s.T>
+        <Prout ''>;
+}
+
+DoFlatten {
+  s.T = <PrintAndFree <TFlatten s.T>>
+        <TFree s.T>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 2: Transpose
+*------------------------------------------------------------------------------
+Example2-Transpose {
+  = <Prout '--- Example 2: Transpose ---'>
+    <Prout ''>
+    <DoTranspose <TFromList (2 3) 1 2 3 4 5 6>>;
+}
+
+DoTranspose {
+  s.T = <Prout 'Original 2x3 matrix:'>
+        <TPrint s.T>
+        
+        <Prout 'Transposed (TT) to 3x2:'>
+        <PrintAndFree <TT s.T>>
+        
+        <Prout 'Same with TTranspose 0 1:'>
+        <PrintAndFree <TTranspose s.T 0 1>>
+        
+        <TFree s.T>
+        <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 3: Combining Tensors
+*------------------------------------------------------------------------------
+Example3-Combine {
+  = <Prout '--- Example 3: Combining Tensors ---'>
+    <Prout ''>
+    <DoCombine <TOnes 2 3> <TFromList (2 3) 7 8 9 10 11 12>>;
+}
+
+DoCombine {
+  s.A s.B
+    = <Prout 'Tensor A (2x3 ones):'>
+      <TPrint s.A>
+      <Prout 'Tensor B (2x3):'>
+      <TPrint s.B>
+      
+      <Prout 'Concatenate along dim 0 (vertical, 4x3):'>
+      <PrintAndFree <TCat 0 s.A s.B>>
+      
+      <Prout 'Concatenate along dim 1 (horizontal, 2x6):'>
+      <PrintAndFree <TCat 1 s.A s.B>>
+      
+      <Prout 'Stack along new dim 0 (2x2x3):'>
+      <PrintAndFree <TStack 0 s.A s.B>>
+      
+      <Prout 'VStack (same as cat dim 0):'>
+      <PrintAndFree <TVStack s.A s.B>>
+      
+      <TFree s.A>
+      <TFree s.B>
+      <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 4: Slicing
+*------------------------------------------------------------------------------
+Example4-Slice {
+  = <Prout '--- Example 4: Slicing ---'>
+    <Prout ''>
+    <DoSlice <TFromList (4 4) 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16>>;
+}
+
+DoSlice {
+  s.T = <Prout 'Original 4x4 matrix:'>
+        <TPrint s.T>
+        
+        <Prout 'Slice rows 1:3 (indices 1,2):'>
+        <PrintAndFree <TSlice s.T 0 1 3>>
+        
+        <Prout 'Slice columns 0:2 (indices 0,1):'>
+        <PrintAndFree <TSlice s.T 1 0 2>>
+        
+        <Prout 'Select row 2 only:'>
+        <PrintAndFree <TSelect s.T 0 2>>
+        
+        <Prout 'Flip along rows (upside down):'>
+        <PrintAndFree <TFlip s.T 0>>
+        
+        <Prout 'Flip left-right:'>
+        <PrintAndFree <TFlipLR s.T>>
+        
+        <TFree s.T>
+        <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 5: Reductions
+*------------------------------------------------------------------------------
+Example5-Reduce {
+  = <Prout '--- Example 5: Reductions ---'>
+    <Prout ''>
+    <DoReduce <TFromList (3 4) 1 2 3 4 5 6 7 8 9 10 11 12>>;
+}
+
+DoReduce {
+  s.T = <Prout 'Original 3x4 matrix (1-12):'>
+        <TPrint s.T>
+        
+        <Prout 'Sum of all elements:'>
+        <PrintAndFree <TSum s.T>>
+        
+        <Prout 'Sum along rows (dim 0), result 1x4:'>
+        <PrintAndFree <TSumDim s.T 0>>
+        
+        <Prout 'Sum along columns (dim 1), result 3x1:'>
+        <PrintAndFree <TSumDim s.T 1>>
+        
+        <Prout 'Mean of all elements:'>
+        <PrintAndFree <TMean s.T>>
+        
+        <Prout 'Mean along rows (dim 0):'>
+        <PrintAndFree <TMeanDim s.T 0>>
+        
+        <Prout 'Product of all elements:'>
+        <PrintAndFree <TProd s.T>>
+        
+        <Prout 'Max of all elements:'>
+        <PrintAndFree <TMax s.T>>
+        
+        <Prout 'Min of all elements:'>
+        <PrintAndFree <TMin s.T>>
+        
+        <Prout 'Argmax (index of max, flattened):'>
+        <PrintAndFree <TArgmax s.T>>
+        
+        <Prout 'Argmax along dim 1 (max column index per row):'>
+        <PrintAndFree <TArgmaxDim s.T 1>>
+        
+        <TFree s.T>
+        <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 6: Statistics
+*------------------------------------------------------------------------------
+Example6-Statistics {
+  = <Prout '--- Example 6: Statistics ---'>
+    <Prout ''>
+    <DoStats <TRand 4 5>>;
+}
+
+DoStats {
+  s.T = <Prout 'Random 4x5 matrix:'>
+        <TPrint s.T>
+        
+        <Prout 'Standard deviation:'>
+        <PrintAndFree <TStd s.T>>
+        
+        <Prout 'Variance:'>
+        <PrintAndFree <TVar s.T>>
+        
+        <Prout 'Frobenius norm:'>
+        <PrintAndFree <TNorm s.T>>
+        
+        <Prout 'Cumulative sum along dim 1:'>
+        <PrintAndFree <TCumsum s.T 1>>
+        
+        <TFree s.T>
+        <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 7: Sorting
+*------------------------------------------------------------------------------
+Example7-Sort {
+  = <Prout '--- Example 7: Sorting ---'>
+    <Prout ''>
+    <DoSort <TFromList (3 4) 12 5 8 1 9 2 11 4 3 10 6 7>>;
+}
+
+DoSort {
+  s.T = <Prout 'Original matrix:'>
+        <TPrint s.T>
+        
+        <Prout 'Sort along dim 1 (each row sorted):'>
+        <DoSortResult <TSort s.T 1>>
+        
+        <Prout 'Argsort along dim 1 (indices that would sort):'>
+        <PrintAndFree <TArgsort s.T 1>>
+        
+        <Prout 'Top 2 values per row:'>
+        <DoTopK <TTopK s.T 2 1>>
+        
+        <TFree s.T>
+        <Prout ''>;
+}
+
+DoSortResult {
+  s.Sorted s.Indices
+    = <Prout 'Sorted values:'>
+      <TPrint s.Sorted>
+      <Prout 'Indices:'>
+      <TPrint s.Indices>
+      <TFree s.Sorted>
+      <TFree s.Indices>;
+}
+
+DoTopK {
+  s.Values s.Indices
+    = <Prout 'Top values:'>
+      <TPrint s.Values>
+      <Prout 'Top indices:'>
+      <TPrint s.Indices>
+      <TFree s.Values>
+      <TFree s.Indices>;
+}
+
+
+*------------------------------------------------------------------------------
+* Helpers
+*------------------------------------------------------------------------------
+PrintAndFree {
+  s.T = <TPrint s.T> <TFree s.T>;
+}
+
+Cleanup {
+  = <Prout '--- Cleanup ---'>
+    <Prout 'Tensors before cleanup: ' <TCount>>
+    <TFreeAll>
+    <Prout 'Tensors after cleanup: ' <TCount>>
+    <Prout ''>
+    <Prout '=== Phase 2 Examples Complete ==='>
+}

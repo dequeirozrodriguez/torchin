@@ -1,0 +1,650 @@
+* TensorUtil.ref - Miscellaneous Utilities
+*
+* This module provides:
+* - Random seed control: TSetSeed, TGetSeed
+* - Device info: TDeviceInfo, TCudaAvailable
+* - Memory info: TMemoryAllocated, TEmptyCache
+* - Tensor utilities: TCopy, TCloneAs, TAsType
+* - Comparison: TEqual, TAllClose
+* - Debugging: TCheckNaN, TCheckInf
+
+%%
+#include <torch/torch.h>
+#include <sstream>
+#include <random>
+
+// Access the tensor storage from TensorCore
+namespace tensor_storage {
+    extern std::unordered_map<int, torch::Tensor> tensors;
+    extern int next_id;
+    
+    int store(torch::Tensor t) {
+        int id = next_id++;
+        tensors[id] = t;
+        return id;
+    }
+    
+    torch::Tensor* get(int id) {
+        auto it = tensors.find(id);
+        if (it != tensors.end()) {
+            return &(it->second);
+        }
+        return nullptr;
+    }
+}
+
+// Store the current seed
+namespace random_state {
+    int64_t current_seed = 0;
+}
+
+#define GET_ONE_TENSOR(id, t) \
+    refalrts::Iter content_b = 0, content_e = 0; \
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end); \
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible; \
+    int id = content_b->number_info; \
+    refalrts::move_left(content_b, content_e); \
+    torch::Tensor* t = tensor_storage::get(id); \
+    if (!t) return refalrts::cRecognitionImpossible;
+
+#define GET_ONE_TENSOR_ONLY(id, t) \
+    refalrts::Iter content_b = 0, content_e = 0; \
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end); \
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible; \
+    int id = content_b->number_info; \
+    torch::Tensor* t = tensor_storage::get(id); \
+    if (!t) return refalrts::cRecognitionImpossible;
+
+#define RETURN_TENSOR(result) \
+    int result_id = tensor_storage::store(result); \
+    refalrts::reinit_number(arg_begin, result_id); \
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end); \
+    return refalrts::cSuccess;
+
+#define RETURN_NUMBER(n) \
+    refalrts::reinit_number(arg_begin, n); \
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end); \
+    return refalrts::cSuccess;
+
+#define RETURN_VOID() \
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end); \
+    return refalrts::cSuccess;
+%%
+
+
+*==============================================================================
+* RANDOM SEED CONTROL
+*==============================================================================
+
+*==============================================================================
+* <TSetSeed s.Seed> ==
+* Set random seed for reproducibility
+*==============================================================================
+$ENTRY TSetSeed {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int64_t seed = content_b->number_info;
+    
+    torch::manual_seed(seed);
+    random_state::current_seed = seed;
+    
+    RETURN_VOID();
+%%
+}
+
+
+*==============================================================================
+* <TGetSeed> == s.Seed
+* Get current random seed
+*==============================================================================
+$ENTRY TGetSeed {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    RETURN_NUMBER(random_state::current_seed);
+%%
+}
+
+
+*==============================================================================
+* <TRandomSeed> == s.Seed
+* Generate and set a random seed, returns the seed used
+*==============================================================================
+$ENTRY TRandomSeed {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    std::random_device rd;
+    int64_t seed = rd();
+    torch::manual_seed(seed);
+    random_state::current_seed = seed;
+    
+    RETURN_NUMBER(seed);
+%%
+}
+
+
+*==============================================================================
+* DEVICE INFORMATION
+*==============================================================================
+
+*==============================================================================
+* <TCudaAvailable> == s.Bool
+* Check if CUDA is available (1 = yes, 0 = no)
+*==============================================================================
+$ENTRY TCudaAvailable {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    RETURN_NUMBER(torch::cuda::is_available() ? 1 : 0);
+%%
+}
+
+
+*==============================================================================
+* <TCudaDeviceCount> == s.Count
+* Get number of CUDA devices
+*==============================================================================
+$ENTRY TCudaDeviceCount {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    RETURN_NUMBER(torch::cuda::device_count());
+%%
+}
+
+
+*==============================================================================
+* <TGetDevice s.TensorID> == s.DeviceType
+* Get device type of tensor (0 = CPU, 1 = CUDA)
+*==============================================================================
+$ENTRY TGetDevice {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    
+    int device_type = t->device().is_cuda() ? 1 : 0;
+    RETURN_NUMBER(device_type);
+%%
+}
+
+
+*==============================================================================
+* <TToCPU s.TensorID> == s.TensorResult
+* Move tensor to CPU
+*==============================================================================
+$ENTRY TToCPU {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->to(torch::kCPU);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TToCUDA s.TensorID> == s.TensorResult
+* Move tensor to CUDA (if available)
+*==============================================================================
+$ENTRY TToCUDA {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    
+    if (!torch::cuda::is_available()) {
+        // Return a copy on CPU if CUDA not available
+        torch::Tensor result = t->clone();
+        RETURN_TENSOR(result);
+    }
+    
+    torch::Tensor result = t->to(torch::kCUDA);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* DATA TYPE CONVERSION
+*==============================================================================
+
+*==============================================================================
+* <TToFloat32 s.TensorID> == s.TensorResult
+* Convert tensor to float32
+*==============================================================================
+$ENTRY TToFloat32 {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->to(torch::kFloat32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TToFloat64 s.TensorID> == s.TensorResult
+* Convert tensor to float64 (double)
+*==============================================================================
+$ENTRY TToFloat64 {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->to(torch::kFloat64);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TToInt32 s.TensorID> == s.TensorResult
+* Convert tensor to int32
+*==============================================================================
+$ENTRY TToInt32 {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->to(torch::kInt32);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TToInt64 s.TensorID> == s.TensorResult
+* Convert tensor to int64 (long)
+*==============================================================================
+$ENTRY TToInt64 {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->to(torch::kInt64);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TToBool s.TensorID> == s.TensorResult
+* Convert tensor to boolean
+*==============================================================================
+$ENTRY TToBool {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = t->to(torch::kBool);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TGetDtype s.TensorID> == s.DtypeCode
+* Get data type of tensor
+* Returns: 0=float32, 1=float64, 2=int32, 3=int64, 4=bool, 5=other
+*==============================================================================
+$ENTRY TGetDtype {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    
+    int dtype_code = 5;  // other
+    auto dtype = t->scalar_type();
+    
+    if (dtype == torch::kFloat32) dtype_code = 0;
+    else if (dtype == torch::kFloat64) dtype_code = 1;
+    else if (dtype == torch::kInt32) dtype_code = 2;
+    else if (dtype == torch::kInt64) dtype_code = 3;
+    else if (dtype == torch::kBool) dtype_code = 4;
+    
+    RETURN_NUMBER(dtype_code);
+%%
+}
+
+
+*==============================================================================
+* TENSOR COMPARISON
+*==============================================================================
+
+*==============================================================================
+* <TEqual s.TensorA s.TensorB> == s.Bool
+* Check if two tensors are exactly equal
+*==============================================================================
+$ENTRY TEqual {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int id_a = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int id_b = content_b->number_info;
+    
+    torch::Tensor* a = tensor_storage::get(id_a);
+    torch::Tensor* b = tensor_storage::get(id_b);
+    
+    if (!a || !b) return refalrts::cRecognitionImpossible;
+    
+    bool equal = a->equal(*b);
+    RETURN_NUMBER(equal ? 1 : 0);
+%%
+}
+
+
+*==============================================================================
+* <TAllClose s.TensorA s.TensorB s.RTol s.ATol> == s.Bool
+* Check if tensors are approximately equal
+* RTol and ATol are divided by 1000000 (1e-6 scale)
+* Default: rtol=1e-5, atol=1e-8
+*==============================================================================
+$ENTRY TAllClose {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int id_a = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int id_b = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    double rtol = 1e-5;
+    double atol = 1e-8;
+    
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        rtol = content_b->number_info / 1000000.0;
+        refalrts::move_left(content_b, content_e);
+    }
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        atol = content_b->number_info / 1000000.0;
+    }
+    
+    torch::Tensor* a = tensor_storage::get(id_a);
+    torch::Tensor* b = tensor_storage::get(id_b);
+    
+    if (!a || !b) return refalrts::cRecognitionImpossible;
+    
+    bool close = torch::allclose(*a, *b, rtol, atol);
+    RETURN_NUMBER(close ? 1 : 0);
+%%
+}
+
+
+*==============================================================================
+* DEBUGGING UTILITIES
+*==============================================================================
+
+*==============================================================================
+* <TCheckNaN s.TensorID> == s.Bool
+* Check if tensor contains any NaN values
+*==============================================================================
+$ENTRY TCheckNaN {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    
+    bool has_nan = torch::any(torch::isnan(*t)).item<bool>();
+    RETURN_NUMBER(has_nan ? 1 : 0);
+%%
+}
+
+
+*==============================================================================
+* <TCheckInf s.TensorID> == s.Bool
+* Check if tensor contains any Inf values
+*==============================================================================
+$ENTRY TCheckInf {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    
+    bool has_inf = torch::any(torch::isinf(*t)).item<bool>();
+    RETURN_NUMBER(has_inf ? 1 : 0);
+%%
+}
+
+
+*==============================================================================
+* <TCheckFinite s.TensorID> == s.Bool
+* Check if all values are finite (not NaN or Inf)
+*==============================================================================
+$ENTRY TCheckFinite {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    
+    bool all_finite = torch::all(torch::isfinite(*t)).item<bool>();
+    RETURN_NUMBER(all_finite ? 1 : 0);
+%%
+}
+
+
+*==============================================================================
+* <TReplaceNaN s.TensorID s.Value> == s.TensorResult
+* Replace NaN values with specified value (value/1000)
+*==============================================================================
+$ENTRY TReplaceNaN {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    float value = content_b->number_info / 1000.0f;
+    
+    torch::Tensor result = torch::nan_to_num(*t, value);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TClampInf s.TensorID s.Min s.Max> == s.TensorResult
+* Replace Inf values by clamping to [min, max] (values/1000)
+*==============================================================================
+$ENTRY TClampInf {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    float min_val = content_b->number_info / 1000.0f;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    float max_val = content_b->number_info / 1000.0f;
+    
+    torch::Tensor result = torch::nan_to_num(*t, 0.0f, max_val, min_val);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* TENSOR STATISTICS SUMMARY
+*==============================================================================
+
+*==============================================================================
+* <TSummary s.TensorID> == (s.Min s.Max s.Mean s.Std s.NumNaN s.NumInf)
+* Get summary statistics (all values x1000 except counts)
+*==============================================================================
+$ENTRY TSummary {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    
+    torch::Tensor t_float = t->to(torch::kFloat32);
+    
+    int min_val = static_cast<int>(t_float.min().item<float>() * 1000);
+    int max_val = static_cast<int>(t_float.max().item<float>() * 1000);
+    int mean_val = static_cast<int>(t_float.mean().item<float>() * 1000);
+    int std_val = static_cast<int>(t_float.std().item<float>() * 1000);
+    int num_nan = torch::sum(torch::isnan(t_float)).item<int>();
+    int num_inf = torch::sum(torch::isinf(t_float)).item<int>();
+    
+    refalrts::reset_allocator(vm);
+    refalrts::Iter open, close, n1, n2, n3, n4, n5, n6;
+    
+    refalrts::alloc_open_bracket(vm, open);
+    refalrts::alloc_number(vm, n1, min_val);
+    refalrts::alloc_number(vm, n2, max_val);
+    refalrts::alloc_number(vm, n3, mean_val);
+    refalrts::alloc_number(vm, n4, std_val);
+    refalrts::alloc_number(vm, n5, num_nan);
+    refalrts::alloc_number(vm, n6, num_inf);
+    refalrts::alloc_close_bracket(vm, close);
+    
+    refalrts::link_brackets(open, close);
+    
+    refalrts::splice_evar(arg_begin, open, close);
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* MEMORY MANAGEMENT
+*==============================================================================
+
+*==============================================================================
+* <TEmptyCache> ==
+* Empty CUDA cache (if using CUDA)
+*==============================================================================
+$ENTRY TEmptyCache {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (torch::cuda::is_available()) {
+        // Note: c10::cuda::CUDACachingAllocator::emptyCache() would be ideal
+        // but may not be available in all builds
+    }
+    
+    RETURN_VOID();
+%%
+}
+
+
+*==============================================================================
+* <TMemoryInfo> == (s.Allocated s.Cached)
+* Get memory info (in KB)
+* Note: Only meaningful for CUDA, returns 0 for CPU
+*==============================================================================
+$ENTRY TMemoryInfo {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int allocated = 0;
+    int cached = 0;
+    
+    // Memory tracking would require CUDA-specific APIs
+    // For CPU builds, we just return 0
+    
+    refalrts::reset_allocator(vm);
+    refalrts::Iter open, close, n1, n2;
+    
+    refalrts::alloc_open_bracket(vm, open);
+    refalrts::alloc_number(vm, n1, allocated);
+    refalrts::alloc_number(vm, n2, cached);
+    refalrts::alloc_close_bracket(vm, close);
+    
+    refalrts::link_brackets(open, close);
+    
+    refalrts::splice_evar(arg_begin, open, close);
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* MISCELLANEOUS
+*==============================================================================
+
+*==============================================================================
+* <TVersion> == e.VersionString
+* Get PyTorch/libtorch version
+*==============================================================================
+$ENTRY TVersion {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    std::string version = TORCH_VERSION;
+    
+    refalrts::reset_allocator(vm);
+    refalrts::Iter first = 0, last = 0;
+    
+    for (char c : version) {
+        refalrts::Iter node;
+        refalrts::alloc_char(vm, node, c);
+        if (first == 0) first = node;
+        last = node;
+    }
+    
+    if (first) {
+        refalrts::splice_evar(arg_begin, first, last);
+    }
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TNumThreads> == s.Count
+* Get number of threads used for parallelization
+*==============================================================================
+$ENTRY TNumThreads {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    RETURN_NUMBER(torch::get_num_threads());
+%%
+}
+
+
+*==============================================================================
+* <TSetNumThreads s.Count> ==
+* Set number of threads for parallelization
+*==============================================================================
+$ENTRY TSetNumThreads {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int num_threads = content_b->number_info;
+    
+    torch::set_num_threads(num_threads);
+    
+    RETURN_VOID();
+%%
+}
+
+
+*==============================================================================
+* <TBenchmark s.TensorID s.NumIterations> == s.MicrosPerOp
+* Benchmark a tensor operation (returns microseconds per operation)
+* Measures time for clone operation as a baseline
+*==============================================================================
+$ENTRY TBenchmark {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int num_iterations = content_b->number_info;
+    if (num_iterations < 1) num_iterations = 1;
+    
+    auto start = std::chrono::high_resolution_clock::now();
+    
+    for (int i = 0; i < num_iterations; i++) {
+        torch::Tensor temp = t->clone();
+        (void)temp;  // Prevent optimization
+    }
+    
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+    
+    int micros_per_op = duration.count() / num_iterations;
+    RETURN_NUMBER(micros_per_op);
+%%
+}

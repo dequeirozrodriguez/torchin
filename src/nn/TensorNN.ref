@@ -1,0 +1,1018 @@
+* TensorNN.ref - Neural Network Layers and Activations
+*
+* This module provides:
+* - Linear layers: TLinear, TLinearNoBias
+* - Activations: TRelu, TSigmoid, TTanh, TSoftmax, TLeakyRelu, TElu, TGelu, TSilu
+* - Dropout: TDropout, TDropout2d
+* - Normalization: TBatchNorm1d, TLayerNorm
+* - Pooling: TMaxPool1d, TAvgPool1d, TMaxPool2d, TAvgPool2d
+* - Convolution: TConv1d, TConv2d
+
+%%
+#include <torch/torch.h>
+#include <cmath>
+
+// Access the tensor storage from TensorCore
+namespace tensor_storage {
+    extern std::unordered_map<int, torch::Tensor> tensors;
+    extern int next_id;
+    
+    int store(torch::Tensor t) {
+        int id = next_id++;
+        tensors[id] = t;
+        return id;
+    }
+    
+    torch::Tensor* get(int id) {
+        auto it = tensors.find(id);
+        if (it != tensors.end()) {
+            return &(it->second);
+        }
+        return nullptr;
+    }
+}
+
+// Training mode flag (for dropout, batchnorm, etc.)
+namespace nn_state {
+    bool training = true;
+}
+
+#define GET_ONE_TENSOR(id, t) \
+    refalrts::Iter content_b = 0, content_e = 0; \
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end); \
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible; \
+    int id = content_b->number_info; \
+    refalrts::move_left(content_b, content_e); \
+    torch::Tensor* t = tensor_storage::get(id); \
+    if (!t) return refalrts::cRecognitionImpossible;
+
+#define GET_ONE_TENSOR_ONLY(id, t) \
+    refalrts::Iter content_b = 0, content_e = 0; \
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end); \
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible; \
+    int id = content_b->number_info; \
+    torch::Tensor* t = tensor_storage::get(id); \
+    if (!t) return refalrts::cRecognitionImpossible;
+
+#define RETURN_TENSOR(result) \
+    int result_id = tensor_storage::store(result); \
+    refalrts::reinit_number(arg_begin, result_id); \
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end); \
+    return refalrts::cSuccess;
+%%
+
+
+*==============================================================================
+* TRAINING MODE
+*==============================================================================
+
+*==============================================================================
+* <TSetTraining s.Mode> == 
+* Set training mode: 1 for training, 0 for evaluation
+* Affects dropout and batchnorm behavior
+*==============================================================================
+$ENTRY TSetTraining {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    nn_state::training = (content_b->number_info != 0);
+    
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TIsTraining> == s.Mode
+* Returns 1 if in training mode, 0 if in eval mode
+*==============================================================================
+$ENTRY TIsTraining {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    refalrts::reinit_number(arg_begin, nn_state::training ? 1 : 0);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* ACTIVATION FUNCTIONS
+*==============================================================================
+
+*==============================================================================
+* <TRelu s.TensorID> == s.TensorResult
+* ReLU activation: max(0, x)
+*==============================================================================
+$ENTRY TRelu {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = torch::relu(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TRelu6 s.TensorID> == s.TensorResult
+* ReLU6 activation: min(max(0, x), 6)
+*==============================================================================
+$ENTRY TRelu6 {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = torch::relu6(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TLeakyRelu s.TensorID s.NegSlope> == s.TensorResult
+* Leaky ReLU: max(neg_slope * x, x), neg_slope is divided by 1000
+* Example: <TLeakyRelu t 10> for negative slope of 0.01
+*==============================================================================
+$ENTRY TLeakyRelu {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    float neg_slope = 0.01f;
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        neg_slope = content_b->number_info / 1000.0f;
+    }
+    
+    torch::Tensor result = torch::leaky_relu(*t, neg_slope);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TElu s.TensorID> == s.TensorResult
+* ELU activation: x if x > 0, alpha * (exp(x) - 1) otherwise
+*==============================================================================
+$ENTRY TElu {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = torch::elu(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TSelu s.TensorID> == s.TensorResult
+* SELU activation (self-normalizing)
+*==============================================================================
+$ENTRY TSelu {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = torch::selu(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TGelu s.TensorID> == s.TensorResult
+* GELU activation (Gaussian Error Linear Unit)
+*==============================================================================
+$ENTRY TGelu {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = torch::gelu(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TSilu s.TensorID> == s.TensorResult
+* SiLU/Swish activation: x * sigmoid(x)
+*==============================================================================
+$ENTRY TSilu {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = torch::silu(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMish s.TensorID> == s.TensorResult
+* Mish activation: x * tanh(softplus(x))
+*==============================================================================
+$ENTRY TMish {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = torch::mish(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <THardswish s.TensorID> == s.TensorResult
+* Hardswish activation
+*==============================================================================
+$ENTRY THardswish {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = torch::hardswish(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TSoftplus s.TensorID> == s.TensorResult
+* Softplus activation: log(1 + exp(x))
+*==============================================================================
+$ENTRY TSoftplus {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = torch::softplus(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TSoftsign s.TensorID> == s.TensorResult
+* Softsign activation: x / (1 + |x|)
+*==============================================================================
+$ENTRY TSoftsign {
+%%
+    GET_ONE_TENSOR_ONLY(id, t);
+    torch::Tensor result = torch::softsign(*t);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TSoftmax s.TensorID s.Dim> == s.TensorResult
+* Softmax along dimension
+* Example: <TSoftmax t 1> for softmax along columns (typical for logits)
+*==============================================================================
+$ENTRY TSoftmax {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = torch::softmax(*t, dim);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TLogSoftmax s.TensorID s.Dim> == s.TensorResult
+* Log-softmax along dimension (numerically stable)
+*==============================================================================
+$ENTRY TLogSoftmax {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int dim = content_b->number_info;
+    
+    torch::Tensor result = torch::log_softmax(*t, dim);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <THardtanh s.TensorID s.Min s.Max> == s.TensorResult
+* Hardtanh: clamps to [min, max], values divided by 1000
+*==============================================================================
+$ENTRY THardtanh {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    float min_val = -1.0f;
+    float max_val = 1.0f;
+    
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        min_val = content_b->number_info / 1000.0f;
+        refalrts::move_left(content_b, content_e);
+    }
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        max_val = content_b->number_info / 1000.0f;
+    }
+    
+    torch::Tensor result = torch::hardtanh(*t, min_val, max_val);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* LINEAR LAYERS
+*==============================================================================
+
+*==============================================================================
+* <TLinear s.Input s.Weight s.Bias> == s.TensorResult
+* Linear transformation: output = input @ weight.T + bias
+* Input: (batch, in_features) or (in_features)
+* Weight: (out_features, in_features)
+* Bias: (out_features)
+*==============================================================================
+$ENTRY TLinear {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int input_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int weight_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int bias_id = content_b->number_info;
+    
+    torch::Tensor* input = tensor_storage::get(input_id);
+    torch::Tensor* weight = tensor_storage::get(weight_id);
+    torch::Tensor* bias = tensor_storage::get(bias_id);
+    
+    if (!input || !weight || !bias) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = torch::linear(*input, *weight, *bias);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TLinearNoBias s.Input s.Weight> == s.TensorResult
+* Linear transformation without bias: output = input @ weight.T
+*==============================================================================
+$ENTRY TLinearNoBias {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int input_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int weight_id = content_b->number_info;
+    
+    torch::Tensor* input = tensor_storage::get(input_id);
+    torch::Tensor* weight = tensor_storage::get(weight_id);
+    
+    if (!input || !weight) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = torch::linear(*input, *weight);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TInitLinear s.InFeatures s.OutFeatures> == s.Weight s.Bias
+* Initialize weight and bias for a linear layer using Xavier initialization
+*==============================================================================
+$ENTRY TInitLinear {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int in_features = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int out_features = content_b->number_info;
+    
+    // Xavier uniform initialization
+    float bound = std::sqrt(6.0f / (in_features + out_features));
+    torch::Tensor weight = torch::empty({out_features, in_features}).uniform_(-bound, bound);
+    torch::Tensor bias = torch::zeros({out_features});
+    
+    int weight_id = tensor_storage::store(weight);
+    int bias_id = tensor_storage::store(bias);
+    
+    refalrts::reset_allocator(vm);
+    refalrts::Iter node1, node2;
+    refalrts::alloc_number(vm, node1, weight_id);
+    refalrts::alloc_number(vm, node2, bias_id);
+    
+    refalrts::splice_evar(arg_begin, node1, node2);
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* <TInitLinearKaiming s.InFeatures s.OutFeatures> == s.Weight s.Bias
+* Initialize using Kaiming (He) initialization (better for ReLU)
+*==============================================================================
+$ENTRY TInitLinearKaiming {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int in_features = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int out_features = content_b->number_info;
+    
+    // Kaiming uniform initialization
+    float bound = std::sqrt(6.0f / in_features);
+    torch::Tensor weight = torch::empty({out_features, in_features}).uniform_(-bound, bound);
+    torch::Tensor bias = torch::zeros({out_features});
+    
+    int weight_id = tensor_storage::store(weight);
+    int bias_id = tensor_storage::store(bias);
+    
+    refalrts::reset_allocator(vm);
+    refalrts::Iter node1, node2;
+    refalrts::alloc_number(vm, node1, weight_id);
+    refalrts::alloc_number(vm, node2, bias_id);
+    
+    refalrts::splice_evar(arg_begin, node1, node2);
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* DROPOUT
+*==============================================================================
+
+*==============================================================================
+* <TDropout s.TensorID s.P> == s.TensorResult
+* Dropout: randomly zero elements with probability p/1000
+* Only active during training mode
+* Example: <TDropout t 500> for 50% dropout
+*==============================================================================
+$ENTRY TDropout {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    float p = content_b->number_info / 1000.0f;
+    
+    torch::Tensor result = torch::dropout(*t, p, nn_state::training);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TDropout2d s.TensorID s.P> == s.TensorResult
+* 2D Dropout: zero entire channels with probability p/1000
+* Input shape: (N, C, H, W)
+*==============================================================================
+$ENTRY TDropout2d {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    float p = content_b->number_info / 1000.0f;
+    
+    torch::Tensor result = torch::feature_dropout(*t, p, nn_state::training);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* NORMALIZATION
+*==============================================================================
+
+*==============================================================================
+* <TLayerNorm s.Input e.NormalizedShape> == s.TensorResult
+* Layer normalization over last dimensions
+* Example: <TLayerNorm t 64> normalizes over last dim of size 64
+*==============================================================================
+$ENTRY TLayerNorm {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    std::vector<int64_t> normalized_shape;
+    while (!refalrts::empty_seq(content_b, content_e)) {
+        if (content_b->tag == refalrts::cDataNumber) {
+            normalized_shape.push_back(content_b->number_info);
+            refalrts::move_left(content_b, content_e);
+        } else {
+            break;
+        }
+    }
+    
+    if (normalized_shape.empty()) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = torch::layer_norm(*t, normalized_shape);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TLayerNormAffine s.Input s.Gamma s.Beta e.NormalizedShape> == s.TensorResult
+* Layer normalization with learnable affine parameters
+*==============================================================================
+$ENTRY TLayerNormAffine {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int input_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int gamma_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int beta_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    torch::Tensor* input = tensor_storage::get(input_id);
+    torch::Tensor* gamma = tensor_storage::get(gamma_id);
+    torch::Tensor* beta = tensor_storage::get(beta_id);
+    
+    if (!input || !gamma || !beta) return refalrts::cRecognitionImpossible;
+    
+    std::vector<int64_t> normalized_shape;
+    while (!refalrts::empty_seq(content_b, content_e)) {
+        if (content_b->tag == refalrts::cDataNumber) {
+            normalized_shape.push_back(content_b->number_info);
+            refalrts::move_left(content_b, content_e);
+        } else {
+            break;
+        }
+    }
+    
+    if (normalized_shape.empty()) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = torch::layer_norm(*input, normalized_shape, *gamma, *beta);
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TBatchNorm1d s.Input s.RunningMean s.RunningVar s.Gamma s.Beta s.Momentum s.Eps> == s.TensorResult
+* Batch normalization for 2D or 3D input
+* Momentum and eps are divided by 1000
+*==============================================================================
+$ENTRY TBatchNorm1d {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    // Parse all arguments
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int input_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int mean_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int var_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int gamma_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int beta_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    float momentum = content_b->number_info / 1000.0f;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    float eps = content_b->number_info / 1000.0f;
+    if (eps <= 0) eps = 1e-5f;
+    
+    torch::Tensor* input = tensor_storage::get(input_id);
+    torch::Tensor* running_mean = tensor_storage::get(mean_id);
+    torch::Tensor* running_var = tensor_storage::get(var_id);
+    torch::Tensor* gamma = tensor_storage::get(gamma_id);
+    torch::Tensor* beta = tensor_storage::get(beta_id);
+    
+    if (!input || !running_mean || !running_var || !gamma || !beta) {
+        return refalrts::cRecognitionImpossible;
+    }
+    
+    torch::Tensor result = torch::batch_norm(
+        *input, *gamma, *beta, *running_mean, *running_var,
+        nn_state::training, momentum, eps, /*cudnn_enabled=*/false
+    );
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TInitBatchNorm s.NumFeatures> == s.RunningMean s.RunningVar s.Gamma s.Beta
+* Initialize batch norm parameters
+*==============================================================================
+$ENTRY TInitBatchNorm {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int num_features = content_b->number_info;
+    
+    torch::Tensor running_mean = torch::zeros({num_features});
+    torch::Tensor running_var = torch::ones({num_features});
+    torch::Tensor gamma = torch::ones({num_features});
+    torch::Tensor beta = torch::zeros({num_features});
+    
+    int mean_id = tensor_storage::store(running_mean);
+    int var_id = tensor_storage::store(running_var);
+    int gamma_id = tensor_storage::store(gamma);
+    int beta_id = tensor_storage::store(beta);
+    
+    refalrts::reset_allocator(vm);
+    refalrts::Iter n1, n2, n3, n4;
+    refalrts::alloc_number(vm, n1, mean_id);
+    refalrts::alloc_number(vm, n2, var_id);
+    refalrts::alloc_number(vm, n3, gamma_id);
+    refalrts::alloc_number(vm, n4, beta_id);
+    
+    refalrts::splice_evar(arg_begin, n1, n4);
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* POOLING
+*==============================================================================
+
+*==============================================================================
+* <TMaxPool1d s.TensorID s.KernelSize s.Stride> == s.TensorResult
+* 1D Max pooling
+* Input: (N, C, L) or (C, L)
+*==============================================================================
+$ENTRY TMaxPool1d {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int kernel_size = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    int stride = kernel_size;
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        stride = content_b->number_info;
+    }
+    
+    torch::Tensor result = torch::max_pool1d(*t, {kernel_size}, {stride});
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TAvgPool1d s.TensorID s.KernelSize s.Stride> == s.TensorResult
+* 1D Average pooling
+*==============================================================================
+$ENTRY TAvgPool1d {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int kernel_size = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    int stride = kernel_size;
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        stride = content_b->number_info;
+    }
+    
+    torch::Tensor result = torch::avg_pool1d(*t, {kernel_size}, {stride});
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TMaxPool2d s.TensorID s.KernelH s.KernelW s.StrideH s.StrideW> == s.TensorResult
+* 2D Max pooling
+* Input: (N, C, H, W)
+*==============================================================================
+$ENTRY TMaxPool2d {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int kh = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int kw = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    int sh = kh, sw = kw;
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        sh = content_b->number_info;
+        refalrts::move_left(content_b, content_e);
+    }
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        sw = content_b->number_info;
+    }
+    
+    torch::Tensor result = torch::max_pool2d(*t, {kh, kw}, {sh, sw});
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TAvgPool2d s.TensorID s.KernelH s.KernelW s.StrideH s.StrideW> == s.TensorResult
+* 2D Average pooling
+*==============================================================================
+$ENTRY TAvgPool2d {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int kh = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int kw = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    int sh = kh, sw = kw;
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        sh = content_b->number_info;
+        refalrts::move_left(content_b, content_e);
+    }
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        sw = content_b->number_info;
+    }
+    
+    torch::Tensor result = torch::avg_pool2d(*t, {kh, kw}, {sh, sw});
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TAdaptiveAvgPool1d s.TensorID s.OutputSize> == s.TensorResult
+* Adaptive average pooling to output size
+*==============================================================================
+$ENTRY TAdaptiveAvgPool1d {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int output_size = content_b->number_info;
+    
+    torch::Tensor result = torch::adaptive_avg_pool1d(*t, {output_size});
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TAdaptiveAvgPool2d s.TensorID s.OutputH s.OutputW> == s.TensorResult
+* Adaptive 2D average pooling
+*==============================================================================
+$ENTRY TAdaptiveAvgPool2d {
+%%
+    GET_ONE_TENSOR(id, t);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int oh = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int ow = content_b->number_info;
+    
+    torch::Tensor result = torch::adaptive_avg_pool2d(*t, {oh, ow});
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* CONVOLUTION
+*==============================================================================
+
+*==============================================================================
+* <TConv1d s.Input s.Weight s.Bias s.Stride s.Padding> == s.TensorResult
+* 1D Convolution
+* Input: (N, C_in, L)
+* Weight: (C_out, C_in, K)
+* Bias: (C_out)
+*==============================================================================
+$ENTRY TConv1d {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int input_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int weight_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int bias_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    int stride = 1, padding = 0;
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        stride = content_b->number_info;
+        refalrts::move_left(content_b, content_e);
+    }
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        padding = content_b->number_info;
+    }
+    
+    torch::Tensor* input = tensor_storage::get(input_id);
+    torch::Tensor* weight = tensor_storage::get(weight_id);
+    torch::Tensor* bias = tensor_storage::get(bias_id);
+    
+    if (!input || !weight || !bias) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = torch::conv1d(*input, *weight, *bias, {stride}, {padding});
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TConv2d s.Input s.Weight s.Bias s.StrideH s.StrideW s.PadH s.PadW> == s.TensorResult
+* 2D Convolution
+* Input: (N, C_in, H, W)
+* Weight: (C_out, C_in, kH, kW)
+* Bias: (C_out)
+*==============================================================================
+$ENTRY TConv2d {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int input_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int weight_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int bias_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    int sh = 1, sw = 1, ph = 0, pw = 0;
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        sh = content_b->number_info;
+        refalrts::move_left(content_b, content_e);
+    }
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        sw = content_b->number_info;
+        refalrts::move_left(content_b, content_e);
+    }
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        ph = content_b->number_info;
+        refalrts::move_left(content_b, content_e);
+    }
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
+        pw = content_b->number_info;
+    }
+    
+    torch::Tensor* input = tensor_storage::get(input_id);
+    torch::Tensor* weight = tensor_storage::get(weight_id);
+    torch::Tensor* bias = tensor_storage::get(bias_id);
+    
+    if (!input || !weight || !bias) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = torch::conv2d(*input, *weight, *bias, {sh, sw}, {ph, pw});
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TInitConv2d s.InChannels s.OutChannels s.KernelH s.KernelW> == s.Weight s.Bias
+* Initialize conv2d parameters with Kaiming initialization
+*==============================================================================
+$ENTRY TInitConv2d {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int in_channels = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int out_channels = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int kh = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int kw = content_b->number_info;
+    
+    // Kaiming initialization
+    float fan_in = in_channels * kh * kw;
+    float bound = std::sqrt(6.0f / fan_in);
+    torch::Tensor weight = torch::empty({out_channels, in_channels, kh, kw}).uniform_(-bound, bound);
+    torch::Tensor bias = torch::zeros({out_channels});
+    
+    int weight_id = tensor_storage::store(weight);
+    int bias_id = tensor_storage::store(bias);
+    
+    refalrts::reset_allocator(vm);
+    refalrts::Iter n1, n2;
+    refalrts::alloc_number(vm, n1, weight_id);
+    refalrts::alloc_number(vm, n2, bias_id);
+    
+    refalrts::splice_evar(arg_begin, n1, n2);
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+*==============================================================================
+* EMBEDDING
+*==============================================================================
+
+*==============================================================================
+* <TEmbedding s.IndicesTensor s.EmbeddingTable> == s.TensorResult
+* Look up embeddings from table
+* Indices: (N,) or (N, L) integer tensor
+* EmbeddingTable: (VocabSize, EmbeddingDim)
+*==============================================================================
+$ENTRY TEmbedding {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int indices_id = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int table_id = content_b->number_info;
+    
+    torch::Tensor* indices = tensor_storage::get(indices_id);
+    torch::Tensor* table = tensor_storage::get(table_id);
+    
+    if (!indices || !table) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor result = torch::embedding(*table, indices->to(torch::kLong));
+    RETURN_TENSOR(result);
+%%
+}
+
+
+*==============================================================================
+* <TInitEmbedding s.VocabSize s.EmbeddingDim> == s.EmbeddingTable
+* Initialize embedding table with normal distribution
+*==============================================================================
+$ENTRY TInitEmbedding {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int vocab_size = content_b->number_info;
+    refalrts::move_left(content_b, content_e);
+    
+    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
+    int embed_dim = content_b->number_info;
+    
+    torch::Tensor table = torch::randn({vocab_size, embed_dim});
+    RETURN_TENSOR(table);
+%%
+}

@@ -1,0 +1,362 @@
+* 03_neural_network.ref - Neural Network Training Example
+*
+* This example demonstrates:
+* - Building a simple MLP (multi-layer perceptron)
+* - Forward pass with activations
+* - Loss computation
+* - Backward pass and gradient descent
+* - Training loop
+
+$EXTERN TZeros, TOnes, TRand, TRandn, TFree, TFreeAll;
+$EXTERN TPrint, TPrintInfo, TItem, TCount;
+$EXTERN TAdd, TMul, TMatMul;
+
+* NN functions
+$EXTERN TLinear, TInitLinear, TInitLinearKaiming;
+$EXTERN TRelu, TSigmoid, TSoftmax, TGelu;
+$EXTERN TDropout, TSetTraining;
+
+* Loss functions
+$EXTERN TMSE, TCrossEntropy, TBinaryCrossEntropy;
+
+* Optimizer functions
+$EXTERN TRequiresGrad, TGrad, TBackward, TZeroGrad, TZeroGradAll;
+$EXTERN TUpdateSGD, TUpdateAdam, TResetOptimizerState;
+
+
+$ENTRY Go {
+  = <Main>;
+}
+
+Main {
+  = <Prout '=== RefTorch Phase 3: Neural Networks ==='>
+    <Prout ''>
+    <Example1-Activations>
+    <Example2-LinearLayer>
+    <Example3-ForwardPass>
+    <Example4-TrainingStep>
+    <Example5-MiniTrainingLoop>
+    <Cleanup>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 1: Activation Functions
+*------------------------------------------------------------------------------
+Example1-Activations {
+  = <Prout '--- Example 1: Activation Functions ---'>
+    <Prout ''>
+    <DoActivations <TRandn 2 5>>;
+}
+
+DoActivations {
+  s.X = <Prout 'Input tensor:'>
+        <TPrint s.X>
+        
+        <Prout 'ReLU(x):'>
+        <PrintAndFree <TRelu s.X>>
+        
+        <Prout 'Sigmoid(x):'>
+        <PrintAndFree <TSigmoid s.X>>
+        
+        <Prout 'GELU(x):'>
+        <PrintAndFree <TGelu s.X>>
+        
+        <Prout 'Softmax(x, dim=1):'>
+        <PrintAndFree <TSoftmax s.X 1>>
+        
+        <TFree s.X>
+        <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 2: Linear Layer
+*------------------------------------------------------------------------------
+Example2-LinearLayer {
+  = <Prout '--- Example 2: Linear Layer ---'>
+    <Prout ''>
+    <DoLinear>;
+}
+
+DoLinear {
+  = <Prout 'Initialize linear layer (4 -> 3):'>
+    <DoLinearWithParams <TInitLinear 4 3>>;
+}
+
+DoLinearWithParams {
+  s.W s.B
+    = <Prout 'Weight shape (3x4):'>
+      <TPrintInfo s.W>
+      <Prout 'Bias shape (3):'>
+      <TPrintInfo s.B>
+      
+      <Prout 'Input (2 samples, 4 features):'>
+      <DoLinearForward <TRand 2 4> s.W s.B>;
+}
+
+DoLinearForward {
+  s.X s.W s.B
+    = <TPrint s.X>
+      <Prout 'Output = X @ W.T + B:'>
+      <PrintAndFree <TLinear s.X s.W s.B>>
+      <TFree s.X>
+      <TFree s.W>
+      <TFree s.B>
+      <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 3: Forward Pass (2-layer MLP)
+*------------------------------------------------------------------------------
+Example3-ForwardPass {
+  = <Prout '--- Example 3: Forward Pass (2-layer MLP) ---'>
+    <Prout ''>
+    <Prout 'Network: Input(4) -> Hidden(8) -> Output(2)'>
+    <Prout ''>
+    <DoMLP>;
+}
+
+DoMLP {
+  = <DoMLPWithLayers 
+      <TInitLinearKaiming 4 8>   /* Layer 1: 4 -> 8 */
+      <TInitLinearKaiming 8 2>>; /* Layer 2: 8 -> 2 */
+}
+
+DoMLPWithLayers {
+  s.W1 s.B1 s.W2 s.B2
+    = <Prout 'Layer 1 weights:'>
+      <TPrintInfo s.W1>
+      <Prout 'Layer 2 weights:'>
+      <TPrintInfo s.W2>
+      <Prout ''>
+      
+      <DoMLPForward <TRand 3 4> s.W1 s.B1 s.W2 s.B2>;
+}
+
+DoMLPForward {
+  s.X s.W1 s.B1 s.W2 s.B2
+    = <Prout 'Input (3 samples, 4 features):'>
+      <TPrint s.X>
+      
+      * Forward: x -> linear1 -> relu -> linear2
+      <DoMLPStep1 <TLinear s.X s.W1 s.B1> s.W2 s.B2>
+      
+      <TFree s.X>
+      <TFree s.W1> <TFree s.B1>
+      <TFree s.W2> <TFree s.B2>
+      <Prout ''>;
+}
+
+DoMLPStep1 {
+  s.H1 s.W2 s.B2
+    = <Prout 'After layer 1 (pre-activation):'>
+      <TPrint s.H1>
+      <DoMLPStep2 <TRelu s.H1> s.W2 s.B2>
+      <TFree s.H1>;
+}
+
+DoMLPStep2 {
+  s.A1 s.W2 s.B2
+    = <Prout 'After ReLU:'>
+      <TPrint s.A1>
+      <DoMLPStep3 <TLinear s.A1 s.W2 s.B2>>
+      <TFree s.A1>;
+}
+
+DoMLPStep3 {
+  s.Out = <Prout 'Final output (3 samples, 2 classes):'>
+          <TPrint s.Out>
+          <TFree s.Out>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 4: Single Training Step with Gradients
+*------------------------------------------------------------------------------
+Example4-TrainingStep {
+  = <Prout '--- Example 4: Training Step with Gradients ---'>
+    <Prout ''>
+    <DoTrainingStep>;
+}
+
+DoTrainingStep {
+  = <Prout 'Simple regression: predict Y from X'>
+    <Prout 'X: 4 samples, 3 features'>
+    <Prout 'Y: 4 samples, 1 target'>
+    <Prout ''>
+    
+    * Initialize weight with gradient tracking
+    <DoTrainInit 
+      <TRequiresGrad <TRandn 1 3> 1>  /* Weight (1x3), requires grad */
+      <TRequiresGrad <TZeros 1> 1>    /* Bias (1), requires grad */
+      <TRand 4 3>                      /* X: input */
+      <TRand 4 1>>;                    /* Y: target */
+}
+
+DoTrainInit {
+  s.W s.B s.X s.Y
+    = <Prout 'Initial weight:'>
+      <TPrint s.W>
+      
+      * Forward pass: Y_pred = X @ W.T + B
+      <DoTrainForward s.W s.B s.X s.Y <TLinear s.X s.W s.B>>;
+}
+
+DoTrainForward {
+  s.W s.B s.X s.Y s.Pred
+    = <Prout 'Predictions:'>
+      <TPrint s.Pred>
+      <Prout 'Targets:'>
+      <TPrint s.Y>
+      
+      * Compute MSE loss
+      <DoTrainLoss s.W s.B s.X s.Y s.Pred <TMSE s.Pred s.Y>>;
+}
+
+DoTrainLoss {
+  s.W s.B s.X s.Y s.Pred s.Loss
+    = <Prout 'MSE Loss:'>
+      <TPrint s.Loss>
+      
+      * Backward pass
+      <TBackward s.Loss>
+      <Prout 'Gradient of weight:'>
+      <PrintAndFree <TGrad s.W>>
+      
+      * SGD update: W = W - lr * grad (lr = 0.01 = 10/1000)
+      <TUpdateSGD s.W 10>
+      <Prout 'Weight after SGD update (lr=0.01):'>
+      <TPrint s.W>
+      
+      <TFree s.W> <TFree s.B>
+      <TFree s.X> <TFree s.Y>
+      <TFree s.Pred> <TFree s.Loss>
+      <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* Example 5: Mini Training Loop
+*------------------------------------------------------------------------------
+Example5-MiniTrainingLoop {
+  = <Prout '--- Example 5: Mini Training Loop (5 iterations) ---'>
+    <Prout ''>
+    <Prout 'Training a simple linear model with Adam optimizer'>
+    <Prout ''>
+    <ResetOptimizerState>
+    <DoMiniTrain>;
+}
+
+ResetOptimizerState {
+  = <TResetOptimizerState>;
+}
+
+DoMiniTrain {
+  = <DoMiniTrainInit
+      <TRequiresGrad <TRandn 1 2> 1>  /* Weight */
+      <TRequiresGrad <TZeros 1> 1>    /* Bias */
+      <TRand 8 2>                      /* X: 8 samples */
+      <TRand 8 1>>;                    /* Y: targets */
+}
+
+DoMiniTrainInit {
+  s.W s.B s.X s.Y
+    = <Prout 'Initial weight:'>
+      <TPrint s.W>
+      <TrainLoop 1 5 s.W s.B s.X s.Y>;
+}
+
+* TrainLoop s.Iter s.MaxIter s.W s.B s.X s.Y
+TrainLoop {
+  s.I s.Max s.W s.B s.X s.Y
+    , <Compare s.I s.Max> : {
+        '+' = <Prout ''>
+              <Prout 'Training complete!'>
+              <Prout 'Final weight:'>
+              <TPrint s.W>
+              <TFree s.W> <TFree s.B>
+              <TFree s.X> <TFree s.Y>
+              <Prout ''>;
+        
+        s.Other = <DoIteration s.I s.Max s.W s.B s.X s.Y>;
+      };
+}
+
+DoIteration {
+  s.I s.Max s.W s.B s.X s.Y
+    = <Prout 'Iteration ' s.I ':'>
+      
+      * Zero gradients
+      <TZeroGradAll s.W s.B>
+      
+      * Forward
+      <DoIterForward s.I s.Max s.W s.B s.X s.Y <TLinear s.X s.W s.B>>;
+}
+
+DoIterForward {
+  s.I s.Max s.W s.B s.X s.Y s.Pred
+    = <DoIterLoss s.I s.Max s.W s.B s.X s.Y s.Pred <TMSE s.Pred s.Y>>;
+}
+
+DoIterLoss {
+  s.I s.Max s.W s.B s.X s.Y s.Pred s.Loss
+    = <Prout '  Loss = ' <GetLossValue s.Loss>>
+      
+      * Backward
+      <TBackward s.Loss>
+      
+      * Adam update (lr=0.1 = 100/1000)
+      <TUpdateAdam s.W 100>
+      <TUpdateAdam s.B 100>
+      
+      <TFree s.Pred>
+      <TFree s.Loss>
+      
+      <TrainLoop <Add s.I 1> s.Max s.W s.B s.X s.Y>;
+}
+
+* Helper to get loss value as integer (x1000)
+GetLossValue {
+  s.T = <TItem s.T>;
+}
+
+
+*------------------------------------------------------------------------------
+* Helpers
+*------------------------------------------------------------------------------
+PrintAndFree {
+  s.T = <TPrint s.T> <TFree s.T>;
+}
+
+Compare {
+  s.A s.B, <Sub s.A s.B> : {
+    0 = '0';
+    s.N, <IsPositive s.N> : True = '+';
+    s.N = '-';
+  };
+}
+
+IsPositive {
+  s.N, <Divmod s.N 1000000000> : {
+    0 s.R = <IsPositiveSmall s.R>;
+    s.Q s.R = True;
+  };
+}
+
+IsPositiveSmall {
+  s.N, <Compare s.N 0> : '+' = True;
+  s.N = False;
+}
+
+
+Cleanup {
+  = <Prout '--- Cleanup ---'>
+    <Prout 'Tensors before cleanup: ' <TCount>>
+    <TFreeAll>
+    <TResetOptimizerState>
+    <Prout 'Tensors after cleanup: ' <TCount>>
+    <Prout ''>
+    <Prout '=== Phase 3 Examples Complete ==='>
+}

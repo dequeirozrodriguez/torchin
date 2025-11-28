@@ -1,3 +1,5 @@
+![Logo](logo.png)
+
 # RefTorch - PyTorch/libtorch Bindings for Refal-5λ
 
 A comprehensive tensor computation library bringing PyTorch's power to the Refal-5λ functional programming language.

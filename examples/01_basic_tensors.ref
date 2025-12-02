@@ -6,11 +6,8 @@
 * - Basic arithmetic operations
 * - Memory management
 
-$EXTERN TZeros, TOnes, TRand, TRandn, TFull, TEye, TArange, TLinspace;
-$EXTERN TClone, TFree, TFreeAll, TFromList, TToList, TItem, TScalar;
-$EXTERN TPrint, TPrintInfo, TShape, TDim, TNumel, TSize, TCount;
-$EXTERN TAdd, TSub, TMul, TMatMul, TMulScalar, TSigmoid;
-
+* Use the master header we just finalized
+$INCLUDE "RefTorch";
 
 $ENTRY Go {
   = <Main>;
@@ -41,84 +38,60 @@ Example1-Creation {
     <Prout 'Creating a 2x3 tensor of ones:'>
     <TPrint <TOnes 2 3>>
     
-    <Prout 'Creating a 3x3 random tensor (uniform 0-1):'>
+    <Prout 'Creating a 3x3 random tensor:'>
     <TPrint <TRand 3 3>>
     
-    <Prout 'Creating a 2x2 random tensor (normal distribution):'>
-    <TPrint <TRandn 2 2>>
+    <Prout 'Creating an identity matrix (3x3):'>
+    <TPrint <TEye 3>>
     
-    <Prout 'Creating a 2x3 tensor filled with 7:'>
-    <TPrint <TFull 7 2 3>>
-    
-    <Prout 'Creating a 4x4 identity matrix:'>
-    <TPrint <TEye 4>>
-    
-    <Prout 'Creating arange(5) - values 0 to 4:'>
-    <TPrint <TArange 5>>
-    
-    <Prout 'Creating arange(2, 8) - values 2 to 7:'>
-    <TPrint <TArange 2 8>>
-    
-    <Prout 'Creating linspace(0, 10, 5) - 5 values from 0 to 10:'>
-    <TPrint <TLinspace 0 10 5>>
-    
+    <TFreeAll>
     <Prout ''>;
 }
 
 
 *------------------------------------------------------------------------------
-* Example 2: Tensor Information
+* Example 2: Tensor Info
 *------------------------------------------------------------------------------
 Example2-Info {
-  = <Prout '--- Example 2: Tensor Information ---'>
+  = <Prout '--- Example 2: Tensor Info ---'>
     <Prout ''>
-    <DoExample2 <TRand 3 4 2>>;
+    <DoInfo <TRandn 4 5>>;
 }
 
-DoExample2 {
-  s.T = <Prout 'Created a 3x4x2 random tensor'>
-        <TPrintInfo s.T>
+DoInfo {
+  s.T = <Prout 'Tensor ID: ' s.T>
         <Prout 'Shape: ' <TShape s.T>>
-        <Prout 'Dimensions: ' <TDim s.T>>
-        <Prout 'Total elements: ' <TNumel s.T>>
-        <Prout 'Size along dim 0: ' <TSize s.T 0>>
-        <Prout 'Size along dim 1: ' <TSize s.T 1>>
-        <Prout 'Current tensor count: ' <TCount>>
+        <Prout 'Dim: ' <TDim s.T>>
+        <Prout 'Numel: ' <TNumel s.T>>
         <TFree s.T>
         <Prout ''>;
 }
 
 
 *------------------------------------------------------------------------------
-* Example 3: Arithmetic Operations
+* Example 3: Basic Arithmetic
 *------------------------------------------------------------------------------
 Example3-Arithmetic {
-  = <Prout '--- Example 3: Arithmetic Operations ---'>
+  = <Prout '--- Example 3: Arithmetic ---'>
     <Prout ''>
-    <DoArithmetic <TOnes 2 2> <TFull 2 2 2>>;
+    <DoArithmetic <TOnes 2 2> <TFull 2000 2 2>>; /* Ones + Twos */
 }
 
 DoArithmetic {
   s.A s.B
-    = <Prout 'Tensor A (ones):'>
-      <TPrint s.A>
-      <Prout 'Tensor B (twos):'>
-      <TPrint s.B>
+    = <Prout 'A (Ones):'> <TPrint s.A>
+      <Prout 'B (Twos):'> <TPrint s.B>
       
       <Prout 'A + B:'>
-      <PrintAndFree <TAdd s.A s.B>>
+      <TPrint <TAdd s.A s.B>>
       
-      <Prout 'A - B:'>
-      <PrintAndFree <TSub s.A s.B>>
+      <Prout 'A * B:'>
+      <TPrint <TMul s.A s.B>>
       
-      <Prout 'A * B (element-wise):'>
-      <PrintAndFree <TMul s.A s.B>>
+      <Prout 'B * 0.5 (Scalar mul):'>
+      <TPrint <TMulScalar s.B 500>>
       
-      <Prout 'A * 3.5 (scalar multiply, 3500/1000):'>
-      <PrintAndFree <TMulScalar s.A 3500>>
-      
-      <TFree s.A>
-      <TFree s.B>
+      <TFreeAll>
       <Prout ''>;
 }
 
@@ -150,6 +123,11 @@ DoMatrixOps {
       <Prout ''>;
 }
 
+/* Helper missing in original file */
+PrintAndFree {
+  s.T = <TPrint s.T> <TFree s.T>;
+}
+
 
 *------------------------------------------------------------------------------
 * Example 5: Creating from List
@@ -162,7 +140,8 @@ Example5-FromList {
 
 DoFromList {
   = <Prout 'Creating 2x3 tensor from values 1,2,3,4,5,6:'>
-    <DoFromListPrint <TFromList (2 3) 1 2 3 4 5 6>>;
+    /* FIX: Added brackets around values (1 2 ... 6) */
+    <DoFromListPrint <TFromList (2 3) (1 2 3 4 5 6)>>;
 }
 
 DoFromListPrint {
@@ -173,19 +152,7 @@ DoFromListPrint {
         <Prout ''>;
 }
 
-
-*------------------------------------------------------------------------------
-* Helper Functions
-*------------------------------------------------------------------------------
-PrintAndFree {
-  s.T = <TPrint s.T> <TFree s.T>;
-}
-
 Cleanup {
-  = <Prout '--- Cleanup ---'>
-    <Prout 'Tensors before cleanup: ' <TCount>>
-    <TFreeAll>
-    <Prout 'Tensors after cleanup: ' <TCount>>
-    <Prout ''>
-    <Prout '=== Examples Complete ==='>
+  = <TFreeAll>
+    <Prout 'All tensors freed.'>;
 }

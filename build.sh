@@ -3,12 +3,12 @@
 
 set -e
 
-# === CONFIGURATION - Adjust these paths ===
+# === CONFIGURATION ===
 LIBTORCH="${LIBTORCH:-$HOME/qwen3_perl/qwen3_refal/torch/libtorch}"
 REFAL_HOME="${REFAL_HOME:-$HOME/qwen3_perl/refal-5-lambda}"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Colors for output
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -20,35 +20,29 @@ echo "REFAL_HOME: $REFAL_HOME"
 echo "PROJECT_DIR: $PROJECT_DIR"
 echo ""
 
-# Check prerequisites
+# Checks
 if [ ! -d "$LIBTORCH" ]; then
     echo -e "${RED}Error: LIBTORCH directory not found: $LIBTORCH${NC}"
-    echo "Set LIBTORCH environment variable to your libtorch installation"
     exit 1
 fi
-
 if [ ! -d "$REFAL_HOME" ]; then
     echo -e "${RED}Error: REFAL_HOME directory not found: $REFAL_HOME${NC}"
-    echo "Set REFAL_HOME environment variable to your refal-5-lambda installation"
     exit 1
 fi
 
-# Export for wrapper script
 export LIBTORCH
 export REFAL_HOME
 
-# Clean previous builds
+# Clean previous builds (garbage .cpp files in root)
 echo -e "${YELLOW}Cleaning previous builds...${NC}"
-rm -f "$PROJECT_DIR"/*.cpp "$PROJECT_DIR"/*.rasl
-rm -f "$PROJECT_DIR"/src/**/*.cpp "$PROJECT_DIR"/src/**/*.rasl 2>/dev/null || true
+rm -f "$PROJECT_DIR"/*.cpp "$PROJECT_DIR"/*.rasl "$PROJECT_DIR"/*.o
+rm -f RefTorch.refi  # Clean up potential leftover link
 
-# Determine what to build
+# Target setup
 TARGET="${1:-examples/01_basic_tensors}"
-OUTPUT="${2:-program}"
+OUTPUT="${2:-01_basic_tensors}" 
 
-echo -e "${YELLOW}Building: $TARGET${NC}"
-
-# Collect all source files
+# Define Sources
 SOURCES=(
     "$REFAL_HOME/lib/src/Library.ref"
     "$PROJECT_DIR/src/core/TensorCore.ref"
@@ -63,7 +57,7 @@ SOURCES=(
     "$PROJECT_DIR/src/util/TensorUtil.ref"
 )
 
-# Add target file
+# Add Target File
 if [ -f "$PROJECT_DIR/${TARGET}.ref" ]; then
     SOURCES+=("$PROJECT_DIR/${TARGET}.ref")
 elif [ -f "$TARGET" ]; then
@@ -73,29 +67,30 @@ else
     exit 1
 fi
 
-# Add test framework if building a test
-if [[ "$TARGET" == *"test/"* ]] || [[ "$TARGET" == *"test_"* ]]; then
-    echo "Adding test framework..."
-    # Insert test_framework before the test file
-    SOURCES=("${SOURCES[@]:0:${#SOURCES[@]}-1}" "$PROJECT_DIR/test/test_framework.ref" "${SOURCES[@]: -1}")
+echo -e "${YELLOW}Preparing Header...${NC}"
+# FIX: Copy header to root so rlc finds it in Current Working Directory
+if [ -f "$PROJECT_DIR/include/RefTorch.refi" ]; then
+    cp "$PROJECT_DIR/include/RefTorch.refi" "$PROJECT_DIR/RefTorch.refi"
+else
+    echo -e "${RED}Error: include/RefTorch.refi not found!${NC}"
+    exit 1
 fi
 
-echo "Sources:"
-for src in "${SOURCES[@]}"; do
-    echo "  - $src"
-done
-echo ""
-
-# Build
 echo -e "${YELLOW}Compiling...${NC}"
+# rlc command:
+# -x  : Build executable
+# -Od : Debug mode (faster compile, easier debugging)
+# -c  : Specifies the C++ compiler wrapper command
 rlc -x -Od --prefix= \
     -c "$PROJECT_DIR/torch-g++.sh -Wall -g -o" \
     "${SOURCES[@]}" \
     -o "$PROJECT_DIR/$OUTPUT"
 
+# Cleanup header
+rm -f "$PROJECT_DIR/RefTorch.refi"
+
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}Build successful: $PROJECT_DIR/$OUTPUT${NC}"
-    echo ""
     echo "Run with: ./$OUTPUT"
 else
     echo -e "${RED}Build failed${NC}"

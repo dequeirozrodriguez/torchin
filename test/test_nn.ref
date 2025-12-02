@@ -1,0 +1,423 @@
+* test_nn.ref - Tests for TensorNN, TensorLoss, TensorOptim
+* (Fixed s.R1 -> t.R1 in TestTrainingMode)
+
+$EXTERN RunTests, AssertTrue, AssertEq, AssertNear;
+$EXTERN AssertShape, AssertDim, AssertTensorClose, CombineResults;
+
+$EXTERN TZeros, TOnes, TFromList, TToList, TFree, TFreeAll, TItem, TSetSeed, TRand, TRandn;
+$EXTERN TSum, TNumel;
+
+* NN functions
+$EXTERN TSetTraining, TIsTraining;
+$EXTERN TRelu, TRelu6, TLeakyRelu, TGelu, TSilu;
+$EXTERN TSoftmax, TLogSoftmax, TSigmoid;
+$EXTERN TLinear, TLinearNoBias, TInitLinear, TInitLinearKaiming;
+$EXTERN TDropout, TLayerNorm;
+$EXTERN TMaxPool1d, TAvgPool1d;
+$EXTERN TEmbedding, TInitEmbedding;
+
+* Loss functions
+$EXTERN TMSE, TMAE, TSmoothL1;
+$EXTERN TCrossEntropy, TBCEWithLogits;
+$EXTERN TCosineSimilarity;
+
+* Optimizer functions
+$EXTERN TRequiresGrad, TDetach, TGrad, THasGrad;
+$EXTERN TBackward, TZeroGrad, TZeroGradAll;
+$EXTERN TUpdateSGD, TUpdateAdam;
+$EXTERN TResetOptimizerState;
+$EXTERN Sub, Prout;
+
+
+$ENTRY Go {
+  = <RunTests
+      TestTrainingMode
+      TestRelu
+      TestRelu6
+      TestLeakyRelu
+      TestGelu
+      TestSoftmax
+      TestLinear
+      TestLinearNoBias
+      TestInitLinear
+      TestDropout
+      TestLayerNorm
+      TestMaxPool1d
+      TestEmbedding
+      TestMSE
+      TestMAE
+      TestCrossEntropy
+      TestBCEWithLogits
+      TestCosineSimilarity
+      TestRequiresGrad
+      TestBackwardSGD
+      TestBackwardAdam
+    >;
+}
+
+* Helper for safe negative number list construction
+MkList { e.Items = (e.Items); }
+
+
+*==============================================================================
+* MODE TESTS
+*==============================================================================
+
+$ENTRY TestTrainingMode {
+  = <DoTestTrainingMode>;
+}
+DoTestTrainingMode {
+  = <TSetTraining 1>
+    <CombineResults
+        <AssertEq 'training mode on' <TIsTraining> 1>
+    >
+    /* FIX: Use t.R1 because result is (Pass Fail) */
+    : t.R1
+    = <TSetTraining 0>
+      <CombineResults
+        t.R1
+        <AssertEq 'training mode off' <TIsTraining> 0>
+      >;
+}
+
+
+*==============================================================================
+* ACTIVATION TESTS
+*==============================================================================
+
+$ENTRY TestRelu {
+  /* Input: -1, 0, 1 -> 0, 0, 1 */
+  = <DoTestRelu <TFromList (3) <MkList <Sub 0 1000> 0 1000>>>;
+}
+DoTestRelu {
+  s.T, <TRelu s.T> : s.R
+    , <TFromList (3) (0 0 1000)> : s.Expected
+    = <CombineResults
+        <AssertShape ('relu shape') s.R 3>
+        <AssertTensorClose 'relu values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+$ENTRY TestRelu6 {
+  /* Input: 1, 7 -> 1, 6 */
+  = <DoTestRelu6 <TFromList (2) (1 7)>>;
+}
+DoTestRelu6 {
+  s.T, <TRelu6 s.T> : s.R
+    , <TFromList (2) (1 6)> : s.Expected
+    /* DEBUG: Print actual values */
+    , <TToList s.R> : e.ActVal
+    = <Prout '[DEBUG] Relu6 Got: ' e.ActVal>
+      <CombineResults
+        <AssertTensorClose 'relu6 values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+$ENTRY TestLeakyRelu {
+  /* Input: -1 -> -0.01 (-10) */
+  = <DoTestLeakyRelu <TFromList (1) <MkList <Sub 0 1000>>>>;
+}
+DoTestLeakyRelu {
+  s.T, <TLeakyRelu s.T> : s.R
+    , <TFromList (1) <MkList <Sub 0 10>>> : s.Expected
+    = <CombineResults
+        <AssertTensorClose 'leaky_relu values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+$ENTRY TestGelu {
+  /* Input: 0. Gelu(0) = 0 */
+  = <DoTestGelu <TFromList (1) (0)>>;
+}
+DoTestGelu {
+  s.T, <TGelu s.T> : s.R
+    , <TFromList (1) (0)> : s.Expected
+    = <CombineResults
+        <AssertTensorClose 'gelu values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+$ENTRY TestSoftmax {
+  /* Input: 0. Output is 1.0 (100% prob). TItem -> 1000 */
+  = <DoTestSoftmax <TFromList (1) (0)>>;
+}
+DoTestSoftmax {
+  s.T, <TSoftmax s.T 0> : s.R
+    , <TItem s.R> : s.Val
+    = <CombineResults
+        <AssertNear 'softmax val' s.Val 1000 10>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+*==============================================================================
+* LAYER TESTS
+*==============================================================================
+
+$ENTRY TestLinearNoBias {
+  /* Y = X @ W^T. X(1x2), W(1x2). [1,2]@[3,4] = 11 */
+  = <DoTestLinearNoBias 
+      <TFromList (1 2) (1 2)> 
+      <TFromList (1 2) (3 4)>>;
+}
+DoTestLinearNoBias {
+  s.X s.W, <TLinearNoBias s.X s.W> : s.Y
+    , <TFromList (1 1) (11)> : s.Expected
+    /* DEBUG: Print values */
+    , <TToList s.Y> : e.ActVal
+    = <Prout '[DEBUG] LinearNB Got: ' e.ActVal>
+      <CombineResults
+        <AssertShape ('linear_nb shape') s.Y 1 1>
+        <AssertTensorClose 'linear_nb values' s.Y s.Expected>
+      >
+      : t.Res = <TFree s.X> <TFree s.W> <TFree s.Y> <TFree s.Expected> t.Res;
+}
+
+$ENTRY TestLinear {
+  /* Y = X @ W^T + b. [1,2]@[3,4] + 5 = 16 */
+  = <DoTestLinear 
+      <TFromList (1 2) (1 2)> 
+      <TFromList (1 2) (3 4)>
+      <TFromList (1) (5)>>;
+}
+DoTestLinear {
+  s.X s.W s.B, <TLinear s.X s.W s.B> : s.Y
+    , <TFromList (1 1) (16)> : s.Expected
+    = <CombineResults
+        <AssertTensorClose 'linear values' s.Y s.Expected>
+      >
+      : t.Res = <TFree s.X> <TFree s.W> <TFree s.B> <TFree s.Y> <TFree s.Expected> t.Res;
+}
+
+
+$ENTRY TestInitLinear {
+  /* InitLinear(In=2, Out=3) -> W(3x2), B(3) */
+  = <DoTestInitLinear 2 3>;
+}
+DoTestInitLinear {
+  s.In s.Out, <TInitLinear s.In s.Out> : s.W s.B
+    = <CombineResults
+        <AssertShape ('init_linear W') s.W s.Out s.In>
+        <AssertShape ('init_linear B') s.B s.Out>
+      >
+      : t.Res = <TFree s.W> <TFree s.B> t.Res;
+}
+
+
+$ENTRY TestDropout {
+  /* Dropout(0.5). Just check shape */
+  = <DoTestDropout <TZeros 10 10>>;
+}
+DoTestDropout {
+  s.T, <TDropout s.T 500 1> : s.R  /* p=0.5, train=1 */
+    = <CombineResults
+        <AssertShape ('dropout shape') s.R 10 10>
+    >
+    : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestLayerNorm {
+  /* LayerNorm(2) on (2,2) input */
+  = <DoTestLayerNorm <TFromList (2 2) (0 1 0 1)>>;
+}
+DoTestLayerNorm {
+  s.T, <TLayerNorm s.T (2)> : s.R
+    = <CombineResults
+        <AssertShape ('layernorm shape') s.R 2 2>
+    >
+    : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestMaxPool1d {
+  /* Input (N, C, L): (1, 1, 4). [1, 2, 3, 4] */
+  /* Pool k=2 s=2 -> [max(1,2), max(3,4)] -> [2, 4] */
+  = <DoTestMaxPool1d <TFromList (1 1 4) (1000 2000 3000 4000)>>;
+}
+DoTestMaxPool1d {
+  s.T, <TMaxPool1d s.T 2 2 0> : s.R
+    , <TFromList (1 1 2) (2000 4000)> : s.Expected
+    = <CombineResults
+        <AssertTensorClose 'maxpool1d values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+$ENTRY TestEmbedding {
+  /* W (2x3). Indices [0, 1] */
+  = <DoTestEmbedding 
+      <TFromList (2 3) (1000 1000 1000 2000 2000 2000)>
+      <TFromList (2) (0 1)>>;
+}
+DoTestEmbedding {
+  s.W s.Idx, <TEmbedding s.Idx s.W> : s.R
+    , <TFromList (2 3) (1000 1000 1000 2000 2000 2000)> : s.Expected
+    = <CombineResults
+        <AssertTensorClose 'embedding values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.W> <TFree s.Idx> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+*==============================================================================
+* LOSS TESTS
+*==============================================================================
+
+$ENTRY TestMSE {
+  = <DoTestMSE <TFromList (1) (1)> <TFromList (1) (3)>>;
+}
+DoTestMSE {
+  s.P s.T, <TMSE s.P s.T> : s.L
+    , <TItem s.L> : s.Val
+    = <CombineResults
+        <AssertNear 'mse value' s.Val 4000 10>
+      >
+      : t.Res = <TFree s.P> <TFree s.T> <TFree s.L> t.Res;
+}
+
+
+$ENTRY TestMAE {
+  = <DoTestMAE <TFromList (1) (1)> <TFromList (1) (3)>>;
+}
+DoTestMAE {
+  s.P s.T, <TMAE s.P s.T> : s.L
+    , <TItem s.L> : s.Val
+    = <CombineResults
+        <AssertNear 'mae value' s.Val 2000 10>
+      >
+      : t.Res = <TFree s.P> <TFree s.T> <TFree s.L> t.Res;
+}
+
+
+$ENTRY TestCrossEntropy {
+  /* Preds: (1, 2) [0, 100] (Logits). Target: [1] (Class 1) */
+  = <DoTestCrossEntropy 
+      <TFromList (1 2) (0 200)> 
+      <TFromList (1) (1)>>;
+}
+DoTestCrossEntropy {
+  s.P s.T, <TCrossEntropy s.P s.T> : s.L
+    = <CombineResults
+        <AssertShape ('cross_entropy shape') s.L>
+    >
+    : t.Res = <TFree s.P> <TFree s.T> <TFree s.L> t.Res;
+}
+
+
+$ENTRY TestBCEWithLogits {
+  /* Pred: 0. Target: 0.5. Loss = 0.693 */
+  = <DoTestBCE <TFromList (1) (0)> <TFromList (1) (500)>>;
+}
+DoTestBCE {
+  s.P s.T, <TBCEWithLogits s.P s.T> : s.L
+    , <TItem s.L> : s.Val
+    = <CombineResults
+        <AssertNear 'bce value' s.Val 693 10>
+      >
+      : t.Res = <TFree s.P> <TFree s.T> <TFree s.L> t.Res;
+}
+
+
+$ENTRY TestCosineSimilarity {
+  /* A=[1,0], B=[1,0] -> 1.0 */
+  = <DoTestCosine <TFromList (1 2) (1 0)> <TFromList (1 2) (1 0)>>;
+}
+DoTestCosine {
+  s.A s.B, <TCosineSimilarity s.A s.B> : s.R
+    , <TItem s.R> : s.Val
+    = <CombineResults
+        <AssertNear 'cosine sim' s.Val 1000 10>
+      >
+      : t.Res = <TFree s.A> <TFree s.B> <TFree s.R> t.Res;
+}
+
+
+*==============================================================================
+* OPTIMIZER & AUTOGRAD TESTS
+*==============================================================================
+
+$ENTRY TestRequiresGrad {
+  = <DoTestRequiresGrad <TFromList (2 2) (1 2 3 4)>>;
+}
+DoTestRequiresGrad {
+  s.T, <TRequiresGrad s.T 1> : s.TGrad
+    = <CombineResults
+        <AssertShape ('grad shape') s.TGrad 2 2>
+        <AssertEq 'initially no grad' <THasGrad s.TGrad> 0>
+    >
+    : t.Res = <TFree s.T> <TFree s.TGrad> t.Res;
+}
+
+
+$ENTRY TestBackwardSGD {
+  = <TResetOptimizerState>
+    <DoTestBackwardSGD
+      <TRequiresGrad <TFromList (1 1) (1)> 1>
+      <TFromList (1 1) (2)>
+      <TFromList (1 1) (0)>>;
+}
+DoTestBackwardSGD {
+  s.W s.X s.Y
+    , <TLinearNoBias s.X s.W> : s.Pred
+    , <TMSE s.Pred s.Y> : s.Loss
+    = <TBackward s.Loss>
+      <CombineResults
+        <AssertEq 'has grad' <THasGrad s.W> 1>
+      >
+      : t.R1
+    = <TUpdateSGD s.W 100>
+      <CombineResults
+        t.R1
+        <CheckWeightUpdated s.W 1000>
+      >
+      : t.Res = <TFree s.W> <TFree s.X> <TFree s.Y> 
+                <TFree s.Pred> <TFree s.Loss> t.Res;
+}
+
+
+$ENTRY TestBackwardAdam {
+  = <TResetOptimizerState>
+    <DoTestBackwardAdam
+      <TRequiresGrad <TFromList (1 1) (1)> 1>
+      <TFromList (1 1) (2)>
+      <TFromList (1 1) (0)>>;
+}
+DoTestBackwardAdam {
+  s.W s.X s.Y
+    , <TLinearNoBias s.X s.W> : s.Pred
+    , <TMSE s.Pred s.Y> : s.Loss
+    = <TBackward s.Loss>
+      <TUpdateAdam s.W 100 900 999 1> /* lr=0.1, b1=0.9, b2=0.999, eps=1e-8 */
+      <CombineResults
+        <CheckWeightUpdated s.W 1000>
+      >
+      : t.Res = <TFree s.W> <TFree s.X> <TFree s.Y> 
+                <TFree s.Pred> <TFree s.Loss> t.Res;
+}
+
+
+CheckWeightUpdated {
+  s.W s.OldVal
+    , <TItem s.W> : s.NewVal
+    , <Sub s.OldVal s.NewVal> : s.Diff
+    , <CompareGreater s.Diff 0> : True
+    = <Prout '  [PASS] weight updated (' s.OldVal ' -> ' s.NewVal ')'> (1 0);
+    
+  s.W s.OldVal
+    , <TItem s.W> : s.NewVal
+    = <Prout '  [FAIL] weight not updated (' s.OldVal ' -> ' s.NewVal ')'> (0 1);
+}
+
+CompareGreater {
+  s.A s.B, <Sub s.A s.B> : '-' s.X = False;
+  s.A s.B, <Sub s.A s.B> : 0 = False;
+  s.A s.B = True;
+}

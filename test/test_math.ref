@@ -1,0 +1,367 @@
+* test_math.ref - Tests for TensorMath operations
+
+$EXTERN RunTests, AssertTrue, AssertEq, AssertNear;
+$EXTERN AssertShape, AssertTensorEq, AssertTensorClose, CombineResults;
+
+$EXTERN TZeros, TOnes, TFull, TFromList, TFree, TItem, TSetSeed;
+$EXTERN TAdd, TSub, TMul, TDiv;
+$EXTERN TAddScalar, TSubScalar, TMulScalar, TDivScalar;
+$EXTERN TMatMul, TDot, TMM, TMV, TOuterProduct;
+$EXTERN TNeg, TAbs, TSqrt, TExp, TLog, TPow, TSquare, TReciprocal;
+$EXTERN TSin, TCos, TTan, TTanh, TSigmoid;
+$EXTERN TEq, TGt, TLt, TGe, TLe;
+$EXTERN TClamp, TMax2, TMin2;
+$EXTERN Sub, TToList, Prout;
+
+$ENTRY Go {
+  = <RunTests
+      TestAdd
+      TestSub
+      TestMul
+      TestDiv
+      TestAddScalar
+      TestMulScalar
+      TestMatMul
+      TestDot
+      TestMV
+      TestNeg
+      TestAbs
+      TestSqrt
+      TestExp
+      TestLog
+      TestSquare
+      TestSigmoid
+      TestTanh
+      TestEqOp
+      TestGtLt
+      TestClamp
+      TestMax2Min2
+    >;
+}
+
+* Helper to construct list (forces evaluation of Sub before TFromList sees it)
+MkList { e.Items = (e.Items); }
+
+
+*==============================================================================
+* ARITHMETIC TESTS
+*==============================================================================
+
+$ENTRY TestAdd {
+  = <DoTestAdd <TFromList (2 2) (10 20 30 40)>
+               <TFromList (2 2) (1 1 1 1)>>;
+}
+DoTestAdd {
+  s.A s.B, <TAdd s.A s.B> : s.R
+    , <TFromList (2 2) (11 21 31 41)> : s.Expected
+    = <CombineResults
+        <AssertShape ('add shape') s.R 2 2>
+        <AssertTensorClose 'add values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.A> <TFree s.B> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+$ENTRY TestSub {
+  = <DoTestSub <TFromList (2) (50 30)>
+               <TFromList (2) (20 10)>>;
+}
+DoTestSub {
+  s.A s.B, <TSub s.A s.B> : s.R
+    , <TFromList (2) (30 20)> : s.Expected
+    = <CombineResults
+        <AssertTensorClose 'sub values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.A> <TFree s.B> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+$ENTRY TestMul {
+  /* Use small numbers */
+  = <DoTestMul <TFromList (2) (2 3)>
+               <TFromList (2) (4 5)>>;
+}
+DoTestMul {
+  s.A s.B, <TMul s.A s.B> : s.R
+    , <TFromList (2) (8 15)> : s.Expected
+    = <CombineResults
+        <AssertTensorClose 'mul values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.A> <TFree s.B> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+$ENTRY TestDiv {
+  = <DoTestDiv <TFromList (2) (10 15)>
+               <TFromList (2) (2 3)>>;
+}
+DoTestDiv {
+  s.A s.B, <TDiv s.A s.B> : s.R
+    , <TFromList (2) (5 5)> : s.Expected
+    = <CombineResults
+        <AssertTensorClose 'div values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.A> <TFree s.B> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+*==============================================================================
+* SCALAR OPERATIONS
+*==============================================================================
+
+$ENTRY TestAddScalar {
+  /* Pass 1000 to represent 1.0 */
+  = <DoTestAddScalar <TFromList (3) (10 20 30)>>;
+}
+DoTestAddScalar {
+  s.T, <TAddScalar s.T 1000> : s.R
+    , <TFromList (3) (11 21 31)> : s.Expected
+    = <CombineResults
+        <AssertTensorClose 'add scalar' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+$ENTRY TestMulScalar {
+  /* Pass 2000 to represent 2.0 */
+  = <DoTestMulScalar <TFromList (3) (10 20 30)>>;
+}
+DoTestMulScalar {
+  s.T, <TMulScalar s.T 2000> : s.R
+    , <TFromList (3) (20 40 60)> : s.Expected
+    = <CombineResults
+        <AssertTensorClose 'mul scalar' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+*==============================================================================
+* MATRIX OPERATIONS
+*==============================================================================
+
+$ENTRY TestMatMul {
+  = <DoTestMatMul 
+      <TFromList (2 3) (1 2 3 4 5 6)>
+      <TFromList (3 2) (1 2 3 4 5 6)>>;
+}
+DoTestMatMul {
+  s.A s.B, <TMatMul s.A s.B> : s.R
+    = <CombineResults
+        <AssertShape ('matmul shape') s.R 2 2>
+      >
+      : t.Res = <TFree s.A> <TFree s.B> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestDot {
+  = <DoTestDot <TFromList (3) (1 2 3)>
+               <TFromList (3) (4 5 6)>>;
+}
+DoTestDot {
+  s.A s.B, <TDot s.A s.B> : s.R
+    , <TItem s.R> : s.Val
+    /* 1*4 + 2*5 + 3*6 = 32. Result scaled by 1000 -> 32000 */
+    = <CombineResults
+        <AssertNear 'dot product' s.Val 32000 100>
+      >
+      : t.Res = <TFree s.A> <TFree s.B> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestMV {
+  = <DoTestMV <TFromList (2 3) (1 2 3 4 5 6)>
+              <TFromList (3) (1 1 1)>>;
+}
+DoTestMV {
+  s.M s.V, <TMV s.M s.V> : s.R
+    = <CombineResults
+        <AssertShape ('mv shape') s.R 2>
+      >
+      : t.Res = <TFree s.M> <TFree s.V> <TFree s.R> t.Res;
+}
+
+
+*==============================================================================
+* UNARY OPERATIONS
+*==============================================================================
+
+$ENTRY TestNeg {
+  /* Use MkList + Sub for negatives, wrapped in () */
+  = <DoTestNeg <TFromList (3) <MkList 1000 <Sub 0 2000> 3000>>>;
+}
+DoTestNeg {
+  s.T, <TNeg s.T> : s.R
+    , <TFromList (3) <MkList <Sub 0 1000> 2000 <Sub 0 3000>>> : s.Expected
+    = <CombineResults
+        <AssertShape ('neg shape') s.R 3>
+        <AssertTensorClose 'neg values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+$ENTRY TestAbs {
+  = <DoTestAbs <TFromList (2) <MkList <Sub 0 3000> 3000>>>;
+}
+DoTestAbs {
+  s.T, <TAbs s.T> : s.R
+    , <TFromList (2) (3000 3000)> : s.Expected
+    = <CombineResults
+        <AssertShape ('abs shape') s.R 2>
+        <AssertTensorClose 'abs values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+$ENTRY TestSqrt {
+  = <DoTestSqrt <TFromList (3) (100 400 900)>>;
+}
+DoTestSqrt {
+  s.T, <TSqrt s.T> : s.R
+    , <TFromList (3) (10 20 30)> : s.Expected
+    = <CombineResults
+        <AssertTensorClose 'sqrt values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+$ENTRY TestExp {
+  = <DoTestExp <TFromList (2) (0 1)>>;
+}
+DoTestExp {
+  s.T, <TExp s.T> : s.R
+    = <CombineResults
+        <AssertShape ('exp shape') s.R 2>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestLog {
+  = <DoTestLog <TFromList (2) (10 20)>>;
+}
+DoTestLog {
+  s.T, <TLog s.T> : s.R
+    = <CombineResults
+        <AssertShape ('log shape') s.R 2>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestSquare {
+  = <DoTestSquare <TFromList (3) (10 20 30)>>;
+}
+DoTestSquare {
+  s.T, <TSquare s.T> : s.R
+    , <TFromList (3) (100 400 900)> : s.Expected
+    = <CombineResults
+        <AssertTensorClose 'square values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+*==============================================================================
+* ACTIVATION FUNCTIONS
+*==============================================================================
+
+$ENTRY TestSigmoid {
+  = <DoTestSigmoid <TFromList (1) (0)>>;
+}
+DoTestSigmoid {
+  s.T, <TSigmoid s.T> : s.R
+    , <TItem s.R> : s.Val
+    = <CombineResults
+        <AssertNear 'sigmoid(0) = 0.5' s.Val 500 50>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestTanh {
+  = <DoTestTanh <TFromList (1) (0)>>;
+}
+DoTestTanh {
+  s.T, <TTanh s.T> : s.R
+    , <TItem s.R> : s.Val
+    = <CombineResults
+        <AssertNear 'tanh(0) = 0' s.Val 0 50>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+*==============================================================================
+* COMPARISON OPERATIONS
+*==============================================================================
+
+$ENTRY TestEqOp {
+  = <DoTestEqOp <TFromList (3) (10 20 30)>
+                <TFromList (3) (10 50 30)>>;
+}
+DoTestEqOp {
+  s.A s.B, <TEq s.A s.B> : s.R
+    = <CombineResults
+        <AssertShape ('eq shape') s.R 3>
+      >
+      : t.Res = <TFree s.A> <TFree s.B> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestGtLt {
+  = <DoTestGtLt <TFromList (3) (10 20 30)>
+                <TFromList (3) (0 20 50)>>;
+}
+DoTestGtLt {
+  s.A s.B
+    , <TGt s.A s.B> : s.Gt
+    , <TLt s.A s.B> : s.Lt
+    = <CombineResults
+        <AssertShape ('gt shape') s.Gt 3>
+        <AssertShape ('lt shape') s.Lt 3>
+      >
+      : t.Res = <TFree s.A> <TFree s.B> <TFree s.Gt> <TFree s.Lt> t.Res;
+}
+
+
+*==============================================================================
+* OTHER OPERATIONS
+*==============================================================================
+
+$ENTRY TestClamp {
+  /* Pass 10000 and 30000 for 10.0 and 30.0 */
+  = <DoTestClamp <TFromList (5) (0 10 20 30 40)>>;
+}
+DoTestClamp {
+  s.T, <TClamp s.T 10000 30000> : s.R
+    , <TFromList (5) (10 10 20 30 30)> : s.Expected
+    = <CombineResults
+        <AssertTensorClose 'clamp values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+$ENTRY TestMax2Min2 {
+  = <DoTestMax2Min2 <TFromList (3) (10 50 30)>
+                    <TFromList (3) (20 40 30)>>;
+}
+DoTestMax2Min2 {
+  s.A s.B
+    , <TMax2 s.A s.B> : s.Max
+    , <TMin2 s.A s.B> : s.Min
+    , <TFromList (3) (20 50 30)> : s.ExpMax
+    , <TFromList (3) (10 40 30)> : s.ExpMin
+    = <CombineResults
+        <AssertTensorClose 'max2 values' s.Max s.ExpMax>
+        <AssertTensorClose 'min2 values' s.Min s.ExpMin>
+      >
+      : t.Res = <TFree s.A> <TFree s.B>
+                <TFree s.Max> <TFree s.Min>
+                <TFree s.ExpMax> <TFree s.ExpMin> t.Res;
+}

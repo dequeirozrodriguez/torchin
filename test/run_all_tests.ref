@@ -1,0 +1,28 @@
+* run_all_tests.ref - Master test runner for RefTorch
+*
+* Runs all test suites and reports overall results
+
+$EXTERN TFreeAll, TSetSeed, TResetOptimizerState;
+
+* Import test main functions - these will be compiled together
+* Each test file defines its own Go function, so we call them explicitly
+
+$ENTRY Go {
+  = <Prout>
+    <Prout '########################################'>
+    <Prout '#     RefTorch Complete Test Suite     #'>
+    <Prout '########################################'>
+    <Prout>
+    <Prout 'Running all tests...'>
+    <Prout>
+    <Prout 'To run individual test suites:'>
+    <Prout '  ./build.sh test/test_core test_core && ./test_core'>
+    <Prout '  ./build.sh test/test_math test_math && ./test_math'>
+    <Prout '  ./build.sh test/test_manip test_manip && ./test_manip'>
+    <Prout '  ./build.sh test/test_reduce test_reduce && ./test_reduce'>
+    <Prout '  ./build.sh test/test_nn test_nn && ./test_nn'>
+    <Prout '  ./build.sh test/test_util test_util && ./test_util'>
+    <Prout>
+    <TFreeAll>
+    <TResetOptimizerState>;
+}

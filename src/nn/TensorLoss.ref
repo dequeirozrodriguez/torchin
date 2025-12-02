@@ -13,13 +13,13 @@ namespace tensor_storage {
     extern std::unordered_map<int, torch::Tensor> tensors;
     extern int next_id;
     
-    int store(torch::Tensor t) {
+    inline int store(torch::Tensor t) {
         int id = next_id++;
         tensors[id] = t;
         return id;
     }
     
-    torch::Tensor* get(int id) {
+    inline torch::Tensor* get(int id) {
         auto it = tensors.find(id);
         if (it != tensors.end()) {
             return &(it->second);
@@ -262,7 +262,7 @@ $ENTRY TBCEWithLogitsWeighted {
     if (!logits || !targets || !pos_weight) return refalrts::cRecognitionImpossible;
     
     torch::Tensor result = torch::binary_cross_entropy_with_logits(
-        *logits, *targets, {}, {}, torch::Reduction::Mean, *pos_weight);
+        *logits, *targets, {}, *pos_weight, torch::Reduction::Mean);
     RETURN_TENSOR(result);
 %%
 }
@@ -520,7 +520,7 @@ $ENTRY TCTCLoss {
 $ENTRY TMultiLabelMargin {
 %%
     GET_TWO_TENSORS(input_id, input, target_id, target);
-    torch::Tensor result = torch::multilabel_margin_loss(*input, target->to(torch::kLong));
+    torch::Tensor result = torch::nn::functional::multilabel_margin_loss(*input, target->to(torch::kLong));
     RETURN_TENSOR(result);
 %%
 }
@@ -533,7 +533,7 @@ $ENTRY TMultiLabelMargin {
 $ENTRY TMultiLabelSoftMargin {
 %%
     GET_TWO_TENSORS(input_id, input, target_id, target);
-    torch::Tensor result = torch::multilabel_soft_margin_loss(*input, *target);
+    torch::Tensor result = torch::nn::functional::multilabel_soft_margin_loss(*input, *target);
     RETURN_TENSOR(result);
 %%
 }

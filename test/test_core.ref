@@ -1,0 +1,397 @@
+* test_core.ref - Tests for TensorCore and TensorInfo
+*
+* Tests tensor creation, memory management, and info queries
+
+$EXTERN RunTests, AssertTrue, AssertFalse, AssertEq, AssertNear, CombineResults;
+$EXTERN AssertShape, AssertDim, AssertNumel, AssertTensorEq;
+
+$EXTERN TZeros, TOnes, TRand, TRandn, TFull, TEye, TArange, TLinspace, TScalar;
+$EXTERN TClone, TFree, TFreeAll, TFromList, TToList, TItem, TReshape;
+$EXTERN TPrint, TPrintInfo, TShape, TDim, TNumel, TSize, TExists, TCount;
+$EXTERN TSetSeed;
+
+
+$ENTRY Go {
+  = <RunTests
+      TestZeros
+      TestOnes
+      TestRand
+      TestRandn
+      TestFull
+      TestEye
+      TestArange
+      TestLinspace
+      TestScalar
+      TestFromList
+      TestToList
+      TestItem
+      TestClone
+      TestShape
+      TestDim
+      TestNumel
+      TestSize
+      TestExists
+      TestCount
+      TestFree
+      TestFreeAll
+    >;
+}
+
+
+
+*==============================================================================
+* CREATION TESTS
+*==============================================================================
+
+DebugTZeros {
+  = <TPrintInfo <TZeros 2 3>>;
+  e.Any = <TPrintInfo <TZeros 2 3>>;
+}
+
+$ENTRY TestZeros {
+  = <CombineResults
+      <TestZeros1D>
+      <TestZeros2D>
+      <TestZeros3D>
+    >;
+  e.Any = <CombineResults
+      <TestZeros1D>
+      <TestZeros2D>
+      <TestZeros3D>
+    >;
+}
+
+TestZeros1D {
+  = <DoTestZeros1D <TZeros 5>>;
+}
+DoTestZeros1D {
+  s.T = <CombineResults
+          <AssertShape ('zeros 1D shape') s.T 5>
+          <AssertDim 'zeros 1D dim' s.T 1>
+          <AssertNumel 'zeros 1D numel' s.T 5>
+        > : t.Result
+      = <TFree s.T> t.Result;
+}
+
+TestZeros2D {
+  = <DoTestZeros2D <TZeros 3 4>>;
+}
+DoTestZeros2D {
+  s.T = <CombineResults
+          <AssertShape ('zeros 2D shape') s.T 3 4>
+          <AssertNumel 'zeros 2D numel' s.T 12>
+        > : t.Result
+      = <TFree s.T> t.Result;
+}
+
+TestZeros3D {
+  = <DoTestZeros3D <TZeros 2 3 4>>;
+}
+DoTestZeros3D {
+  s.T = <CombineResults
+          <AssertShape ('zeros 3D shape') s.T 2 3 4>
+          <AssertDim 'zeros 3D dim' s.T 3>
+          <AssertNumel 'zeros 3D numel' s.T 24>
+        > : t.Result
+      = <TFree s.T> t.Result;
+}
+
+
+$ENTRY TestOnes {
+  = <DoTestOnes <TOnes 2 2>>;
+  e.Any = <DoTestOnes <TOnes 2 2>>;
+}
+DoTestOnes {
+  s.T = <CombineResults
+          <AssertShape ('ones shape') s.T 2 2>
+          <AssertNumel 'ones numel' s.T 4>
+        >
+        : t.R = <TFree s.T> t.R;
+}
+
+
+$ENTRY TestRand {
+  = <TSetSeed 42>
+    <DoTestRand <TRand 3 3>>;
+  e.Any = <TSetSeed 42> <DoTestRand <TRand 3 3>>;
+}
+DoTestRand {
+  s.T = <CombineResults
+          <AssertShape ('rand shape') s.T 3 3>
+          <AssertDim 'rand dim' s.T 2>
+        >
+        : t.R = <TFree s.T> t.R;
+}
+
+
+$ENTRY TestRandn {
+  = <TSetSeed 42>
+    <DoTestRandn <TRandn 4 4>>;
+  e.Any = <TSetSeed 42> <DoTestRandn <TRandn 4 4>>;
+}
+DoTestRandn {
+  s.T = <CombineResults
+          <AssertShape ('randn shape') s.T 4 4>
+          <AssertNumel 'randn numel' s.T 16>
+        >
+        : t.R = <TFree s.T> t.R;
+}
+
+
+$ENTRY TestFull {
+  = <DoTestFull <TFull 5000 2 3>>; /* 5.0 */
+  e.Any = <DoTestFull <TFull 5000 2 3>>;
+}
+DoTestFull {
+  s.T = <CombineResults
+          <AssertShape ('full shape') s.T 2 3>
+          <AssertNumel 'full numel' s.T 6>
+        >
+        : t.R = <TFree s.T> t.R;
+}
+
+
+$ENTRY TestEye {
+  = <DoTestEye <TEye 4>>;
+  e.Any = <DoTestEye <TEye 4>>;
+}
+DoTestEye {
+  s.T = <CombineResults
+          <AssertShape ('eye shape') s.T 4 4>
+          <AssertDim 'eye dim' s.T 2>
+          <AssertNumel 'eye numel' s.T 16>
+        >
+        : t.R = <TFree s.T> t.R;
+}
+
+
+$ENTRY TestArange {
+  = <DoTestArange <TArange 10>>;
+  e.Any = <DoTestArange <TArange 10>>;
+}
+DoTestArange {
+  s.T = <CombineResults
+          <AssertShape ('arange shape') s.T 10>
+          <AssertNumel 'arange numel' s.T 10>
+        >
+        : t.R = <TFree s.T> t.R;
+}
+
+
+$ENTRY TestLinspace {
+  = <DoTestLinspace <TLinspace 0 1000 5>>; /* 0 to 1.0, 5 steps */
+  e.Any = <DoTestLinspace <TLinspace 0 1000 5>>;
+}
+DoTestLinspace {
+  s.T = <CombineResults
+          <AssertShape ('linspace shape') s.T 5>
+          <AssertNumel 'linspace numel' s.T 5>
+        >
+        : t.R = <TFree s.T> t.R;
+}
+
+
+$ENTRY TestScalar {
+  = <DoTestScalar <TScalar 3141>>; /* π ≈ 3.141 */
+  e.Any = <DoTestScalar <TScalar 3141>>;
+}
+DoTestScalar {
+  s.T = <CombineResults
+          <AssertDim 'scalar dim' s.T 0>
+          <AssertNumel 'scalar numel' s.T 1>
+        >
+        : t.R = <TFree s.T> t.R;
+}
+
+
+$ENTRY TestFromList {
+  = <DoTestFromList <TFromList (2 3) (1 2 3 4 5 6)>>;
+  e.Any = <DoTestFromList <TFromList (2 3) (1 2 3 4 5 6)>>;
+}
+DoTestFromList {
+  s.T = <CombineResults
+          <AssertShape ('fromlist shape') s.T 2 3>
+          <AssertNumel 'fromlist numel' s.T 6>
+        >
+        : t.R = <TFree s.T> t.R;
+}
+
+
+*==============================================================================
+* CONVERSION TESTS
+*==============================================================================
+
+$ENTRY TestToList {
+  = <DoTestToList <TFromList (3) (1000 2000 3000)>>;  /* 1.0, 2.0, 3.0 */
+  e.Any = <DoTestToList <TFromList (3) (1000 2000 3000)>>;
+}
+DoTestToList {
+  s.T, <TToList s.T> : e.List
+    = <CombineResults
+        <AssertTrue 'tolist returns values' <HasElements e.List>>
+      >
+      : t.R = <TFree s.T> t.R;
+}
+
+HasElements { = 0; e.X = 1; }
+
+
+$ENTRY TestItem {
+  = <DoTestItem <TScalar 1>>;  /* e ≈ 2.718 */
+  e.Any = <DoTestItem <TScalar 1>>;
+}
+DoTestItem {
+  s.T, <TItem s.T> : s.Val
+    = <CombineResults
+        <AssertNear 'item value' s.Val 1000 10>
+      >
+      : t.R = <TFree s.T> t.R;
+}
+
+
+*==============================================================================
+* MEMORY TESTS
+*==============================================================================
+
+$ENTRY TestClone {
+  = <DoTestClone <TRand 2 2>>;
+  e.Any = <DoTestClone <TRand 2 2>>;
+}
+DoTestClone {
+  s.Orig, <TClone s.Orig> : s.Copy
+    = <CombineResults
+        <AssertShape ('clone shape matches') s.Copy 2 2>
+        <AssertTensorEq 'clone values match' s.Orig s.Copy>
+      >
+      : t.R = <TFree s.Orig> <TFree s.Copy> t.R;
+}
+
+
+$ENTRY TestFree {
+  = <DoTestFree <TZeros 2 2>>;
+  e.Any = <DoTestFree <TZeros 2 2>>;
+}
+DoTestFree {
+  s.T = <TFree s.T>
+        <CombineResults
+          <AssertFalse 'freed tensor not exists' <TExists s.T>>
+        >;
+}
+
+
+$ENTRY TestFreeAll {
+  = <TZeros 2 2> : s.T1
+  = <TOnes 3 3> : s.T2
+  = <TRand 4 4> : s.T3
+  = <TFreeAll>
+    <CombineResults
+      <AssertEq 'freeall clears all' <TCount> 0>
+    >;
+  e.Any =
+    <TZeros 2 2> : s.T1
+    = <TOnes 3 3> : s.T2
+    = <TRand 4 4> : s.T3
+    = <TFreeAll>
+      <CombineResults
+        <AssertEq 'freeall clears all' <TCount> 0>
+      >;
+}
+
+
+*==============================================================================
+* INFO TESTS
+*==============================================================================
+
+$ENTRY TestShape {
+  = <DoTestShape <TZeros 5 4 3>>;
+  e.Any = <DoTestShape <TZeros 5 4 3>>;
+}
+DoTestShape {
+  s.T, <TShape s.T> : e.Shape
+    = <CombineResults
+        <AssertTrue 'shape is 5 4 3' <ShapeIs e.Shape 5 4 3>>
+      >
+      : t.R = <TFree s.T> t.R;
+}
+
+ShapeIs {
+  s.A s.B s.C s.A s.B s.C = 1;
+  e.X e.Y = 0;
+}
+
+
+$ENTRY TestDim {
+  = <DoTestDim1 <TZeros 5>>
+    : t.R1
+  = <DoTestDim2 <TZeros 3 4>>
+    : t.R2
+  = <CombineResults t.R1 t.R2>;
+  e.Any =
+    <DoTestDim1 <TZeros 5>>
+    : t.R1
+    = <DoTestDim2 <TZeros 3 4>>
+    : t.R2
+    = <CombineResults t.R1 t.R2>;
+}
+
+DoTestDim1 {
+  s.T = <AssertDim 'dim 1D' s.T 1> : t.R = <TFree s.T> t.R;
+}
+DoTestDim2 {
+  s.T = <AssertDim 'dim 2D' s.T 2> : t.R = <TFree s.T> t.R;
+}
+
+
+$ENTRY TestNumel {
+  = <DoTestNumel <TZeros 2 3 4>>;
+  e.Any = <DoTestNumel <TZeros 2 3 4>>;
+}
+DoTestNumel {
+  s.T = <AssertNumel 'numel 2x3x4' s.T 24> : t.R = <TFree s.T> t.R;
+}
+
+
+$ENTRY TestSize {
+  = <DoTestSize <TZeros 5 4 3>>;
+  e.Any = <DoTestSize <TZeros 5 4 3>>;
+}
+DoTestSize {
+  s.T = <CombineResults
+          <AssertEq 'size dim 0' <TSize s.T 0> 5>
+          <AssertEq 'size dim 1' <TSize s.T 1> 4>
+          <AssertEq 'size dim 2' <TSize s.T 2> 3>
+        >
+        : t.R = <TFree s.T> t.R;
+}
+
+
+$ENTRY TestExists {
+  = <DoTestExists <TZeros 2 2>>;
+  e.Any = <DoTestExists <TZeros 2 2>>;
+}
+DoTestExists {
+  s.T = <CombineResults
+          <AssertTrue 'exists before free' <TExists s.T>>
+        >
+        : t.R = <TFree s.T>
+        <CombineResults
+          t.R
+          <AssertFalse 'not exists after free' <TExists s.T>>
+        >;
+}
+
+
+$ENTRY TestCount {
+  = <TFreeAll>
+    <TZeros 2 2> : s.T1
+  = <TOnes 3 3> : s.T2
+  = <AssertEq 'count is 2' <TCount> 2>
+    : t.R = <TFree s.T1> <TFree s.T2> t.R;
+  e.Any =
+    <TFreeAll>
+    <TZeros 2 2> : s.T1
+    = <TOnes 3 3> : s.T2
+    = <AssertEq 'count is 2' <TCount> 2>
+      : s.R = <TFree s.T1> <TFree s.T2> s.R;
+}
+

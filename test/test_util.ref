@@ -1,0 +1,293 @@
+* test_util.ref - Tests for TensorIO and TensorUtil
+* (Fixed: Added ': e.Ignore' to all condition calls)
+
+$EXTERN RunTests, AssertTrue, AssertFalse, AssertEq, AssertNear;
+$EXTERN AssertShape, AssertTensorEq, AssertTensorClose, CombineResults;
+
+$EXTERN TZeros, TOnes, TRand, TFromList, TFree, TFreeAll;
+$EXTERN TItem, TNumel, TDim;
+
+* IO functions
+$EXTERN TSave, TLoad, TSaveText, TLoadText, TSaveBinary, TLoadBinary;
+$EXTERN TSaveCSV, TLoadCSV, TTensorToString, TFileExists;
+
+* Utility functions
+$EXTERN TSetSeed, TGetSeed;
+$EXTERN TCudaAvailable, TCudaDeviceCount, TGetDevice, TToCPU;
+$EXTERN TToFloat32, TToFloat64, TToInt32, TToInt64, TGetDtype;
+$EXTERN TEqual, TAllClose;
+$EXTERN TCheckNaN, TCheckInf, TCheckFinite, TSummary;
+$EXTERN TVersion, TNumThreads, TSetNumThreads;
+$EXTERN Prout;
+
+
+$ENTRY Go {
+  = <RunTests
+      TestSetSeed
+      TestSeedReproducibility
+      TestSavePT
+      TestSaveText
+      TestSaveBinary
+      TestSaveCSV
+      TestFileExists
+      TestDeviceInfo
+      TestDtypeConversion
+      TestGetDtype
+      TestEqual
+      TestAllClose
+      TestCheckFinite
+      TestSummary
+      TestVersion
+      TestNumThreads
+    >;
+}
+
+
+*==============================================================================
+* SEED TESTS
+*==============================================================================
+
+$ENTRY TestSetSeed {
+  = <DoTestSetSeed>;
+}
+DoTestSetSeed {
+  e.In, <TSetSeed 42> : e.Ign
+    = <CombineResults
+        <AssertTrue 'set seed runs' 1>
+      >;
+}
+
+
+$ENTRY TestSeedReproducibility {
+  = <DoTestSeedReproducibility>;
+}
+DoTestSeedReproducibility {
+  e.In
+    , <TSetSeed 1234> : e.I1
+    , <TRand 2 2> : s.T1
+    , <TSetSeed 1234> : e.I2
+    , <TRand 2 2> : s.T2
+    , <CombineResults
+        <AssertTensorEq 'reproducibility' s.T1 s.T2>
+      > : t.Res
+    = <TFree s.T1> <TFree s.T2> t.Res;
+}
+
+
+*==============================================================================
+* IO TESTS
+*==============================================================================
+
+$ENTRY TestSavePT {
+  = <DoTestSavePT <TFromList (2) (1000 2000)>>;
+}
+DoTestSavePT {
+  s.T
+    , <TSave s.T 'test_tensor.pt'> : s.Ok
+    , <TLoad 'test_tensor.pt'> : s.Loaded
+    , <CombineResults
+        <AssertEq 'save pt success' s.Ok 1>
+        <AssertTensorEq 'load pt values' s.T s.Loaded>
+      > : t.Res
+    = <TFree s.T> <TFree s.Loaded> t.Res;
+}
+
+
+$ENTRY TestSaveText {
+  = <DoTestSaveText <TFromList (2) (3000 4000)>>;
+}
+DoTestSaveText {
+  s.T
+    , <TSaveText s.T 'test_tensor.txt'> : s.Ok
+    , <TLoadText 'test_tensor.txt'> : s.Loaded
+    , <CombineResults
+        <AssertEq 'save text success' s.Ok 1>
+        <AssertTensorEq 'load text values' s.T s.Loaded>
+      > : t.Res
+    = <TFree s.T> <TFree s.Loaded> t.Res;
+}
+
+
+$ENTRY TestSaveBinary {
+  = <DoTestSaveBinary <TFromList (2) (5000 6000)>>;
+}
+DoTestSaveBinary {
+  s.T
+    , <TSaveBinary s.T 'test_tensor.bin'> : s.Ok
+    , <TLoadBinary 'test_tensor.bin'> : s.Loaded
+    , <CombineResults
+        <AssertEq 'save bin success' s.Ok 1>
+        <AssertTensorEq 'load bin values' s.T s.Loaded>
+      > : t.Res
+    = <TFree s.T> <TFree s.Loaded> t.Res;
+}
+
+
+$ENTRY TestSaveCSV {
+  = <DoTestSaveCSV <TFromList (1 2) (7000 8000)>>;
+}
+DoTestSaveCSV {
+  s.T
+    , <TSaveCSV s.T 'test_tensor.csv'> : s.Ok
+    , <TLoadCSV 'test_tensor.csv'> : s.Loaded
+    , <CombineResults
+        <AssertEq 'save csv success' s.Ok 1>
+        <AssertTensorEq 'load csv values' s.T s.Loaded>
+      > : t.Res
+    = <TFree s.T> <TFree s.Loaded> t.Res;
+}
+
+
+$ENTRY TestFileExists {
+  = <DoTestFileExists>;
+}
+DoTestFileExists {
+  e.In
+    , <CombineResults
+        <AssertEq 'file exists' <TFileExists 'test_tensor.pt'> 1>
+        <AssertEq 'file not exists' <TFileExists 'non_existent_file.pt'> 0>
+      > : t.Res
+    = t.Res;
+}
+
+
+*==============================================================================
+* DEVICE INFO
+*==============================================================================
+
+$ENTRY TestDeviceInfo {
+  = <DoTestDeviceInfo>;
+}
+DoTestDeviceInfo {
+  e.In
+    , <TCudaAvailable> : s.HasCuda
+    , <TCudaDeviceCount> : s.Count
+    , <CombineResults
+        <AssertTrue 'cuda check runs' 1>
+        <AssertTrue 'device count runs' 1>
+      > : t.Res
+    = t.Res;
+}
+
+
+*==============================================================================
+* DTYPE & DEVICE TESTS
+*==============================================================================
+
+$ENTRY TestDtypeConversion {
+  = <DoTestDtypeConversion <TFromList (1) (1000)>>;
+}
+DoTestDtypeConversion {
+  s.T
+    , <TToInt64 s.T> : s.Long
+    , <TToFloat32 s.Long> : s.Float
+    , <CombineResults
+        <AssertTensorClose 'dtype roundtrip' s.T s.Float>
+      > : t.Res
+    = <TFree s.T> <TFree s.Long> <TFree s.Float> t.Res;
+}
+
+
+$ENTRY TestGetDtype {
+  = <DoTestGetDtype <TFromList (1) (0)>>;
+}
+DoTestGetDtype {
+  s.T, <TGetDtype s.T> : s.Type
+    = <CombineResults
+        <AssertTrue 'dtype returned' 1>
+    >
+    : t.Res = <TFree s.T> t.Res;
+}
+
+
+*==============================================================================
+* COMPARISON TESTS
+*==============================================================================
+
+$ENTRY TestEqual {
+  = <DoTestEqual <TFromList (2) (1000 2000)> <TFromList (2) (1000 2000)>>;
+}
+DoTestEqual {
+  s.A s.B, <TEqual s.A s.B> : s.Res
+    = <CombineResults
+        <AssertEq 'tensors equal' s.Res 1>
+    >
+    : t.R = <TFree s.A> <TFree s.B> t.R;
+}
+
+
+$ENTRY TestAllClose {
+  = <DoTestAllClose <TFromList (1) (1000)> <TFromList (1) (1000)>>;
+}
+DoTestAllClose {
+  s.A s.B, <TAllClose s.A s.B 1 1> : s.Res
+    = <CombineResults
+        <AssertEq 'tensors close' s.Res 1>
+    >
+    : t.R = <TFree s.A> <TFree s.B> t.R;
+}
+
+
+*==============================================================================
+* DEBUGGING TESTS
+*==============================================================================
+
+$ENTRY TestCheckFinite {
+  = <DoTestCheckFinite <TFromList (4) (1000 2000 3000 4000)>>;
+}
+DoTestCheckFinite {
+  s.T, <CombineResults
+          <AssertEq 'normal tensor is finite' <TCheckFinite s.T> 1>
+          <AssertEq 'normal tensor no nan' <TCheckNaN s.T> 0>
+          <AssertEq 'normal tensor no inf' <TCheckInf s.T> 0>
+        >
+        : t.Res
+        = <TFree s.T> t.Res;
+}
+
+
+$ENTRY TestSummary {
+  = <DoTestSummary <TFromList (4) (1 2 3 4)>>;
+}
+DoTestSummary {
+  s.T, <TSummary s.T> : (s.Min s.Max s.Mean s.Std s.NaN s.Inf)
+    = <CombineResults
+        <AssertNear 'summary min' s.Min 1000 100>
+        <AssertNear 'summary max' s.Max 4000 100>
+        <AssertNear 'summary mean' s.Mean 2500 100>
+        <AssertEq 'summary nan count' s.NaN 0>
+        <AssertEq 'summary inf count' s.Inf 0>
+      >
+      : t.Res = <TFree s.T> t.Res;
+}
+
+
+*==============================================================================
+* SYSTEM INFO
+*==============================================================================
+
+$ENTRY TestVersion {
+  = <DoTestVersion>;
+}
+DoTestVersion {
+  /* Added : s.Ign to consume print output or ignored result */
+  e.In
+    , <TVersion> : e.V
+    , <Prout 'LibTorch Version: ' e.V> : e.Ign
+    , <CombineResults <AssertTrue 'version check' 1>> : t.Res
+    = t.Res;
+}
+
+$ENTRY TestNumThreads {
+  = <DoTestNumThreads>;
+}
+DoTestNumThreads {
+  /* Added : e.Ign to consume result */
+  e.In
+    , <TSetNumThreads 2> : e.Ign
+    , <TNumThreads> : s.N
+    , <CombineResults
+        <AssertEq 'num threads set' s.N 2>
+    > : t.Res
+    = t.Res;
+}

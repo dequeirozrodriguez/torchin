@@ -16,13 +16,13 @@ namespace tensor_storage {
     extern std::unordered_map<int, torch::Tensor> tensors;
     extern int next_id;
     
-    int store(torch::Tensor t) {
+    inline int store(torch::Tensor t) {
         int id = next_id++;
         tensors[id] = t;
         return id;
     }
     
-    torch::Tensor* get(int id) {
+    inline torch::Tensor* get(int id) {
         auto it = tensors.find(id);
         if (it != tensors.end()) {
             return &(it->second);
@@ -31,8 +31,17 @@ namespace tensor_storage {
     }
 }
 
+// Helper: read single int
+inline bool read_int(refalrts::Iter& b, refalrts::Iter& e, int64_t& val) {
+    if (refalrts::empty_seq(b, e)) return false;
+    if (b->tag != refalrts::cDataNumber) return false;
+    val = b->number_info;
+    refalrts::move_left(b, e);
+    return true;
+}
+
 // Helper: read list of ints
-std::vector<int64_t> read_int_list(refalrts::Iter& b, refalrts::Iter& e) {
+inline std::vector<int64_t> read_int_list(refalrts::Iter& b, refalrts::Iter& e) {
     std::vector<int64_t> result;
     while (!refalrts::empty_seq(b, e)) {
         if (b->tag == refalrts::cDataNumber) {
@@ -258,19 +267,28 @@ $ENTRY TSqueeze {
     refalrts::Iter content_b = 0, content_e = 0;
     refalrts::call_left(content_b, content_e, arg_begin, arg_end);
     
-    if (content_b->tag != refalrts::cDataNumber) {
-        return refalrts::cRecognitionImpossible;
-    }
-    int id = content_b->number_info;
+    int64_t id;
+    if (!read_int(content_b, content_e, id)) return refalrts::cRecognitionImpossible;
     
     torch::Tensor* t = tensor_storage::get(id);
     if (!t) return refalrts::cRecognitionImpossible;
     
-    torch::Tensor result = t->squeeze();
-    RETURN_TENSOR(result);
+    torch::Tensor res;
+    int64_t dim;
+    
+    // Check if there is a dimension argument left
+    if (!refalrts::empty_seq(content_b, content_e) && read_int(content_b, content_e, dim)) {
+        res = t->squeeze(dim);
+    } else {
+        res = t->squeeze();
+    }
+    
+    int new_id = tensor_storage::store(res);
+    refalrts::reinit_number(arg_begin, new_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
 %%
 }
-
 
 *==============================================================================
 * <TSqueezeDim s.TensorID s.Dim> == s.TensorResult
@@ -321,29 +339,41 @@ $ENTRY TCat {
     refalrts::Iter content_b = 0, content_e = 0;
     refalrts::call_left(content_b, content_e, arg_begin, arg_end);
     
-    // First argument is dimension
-    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
-    int dim = content_b->number_info;
+    refalrts::Iter list_b = 0, list_e = 0;
+    // Essential: Check for brackets around the tensor list
+    if (!refalrts::brackets_term(list_b, list_e, content_b)) return refalrts::cRecognitionImpossible;
+    
+    // FIX: Skip past the bracketed term using link_info
+    content_b = content_b->link_info;
     refalrts::move_left(content_b, content_e);
     
-    // Collect tensors
     std::vector<torch::Tensor> tensors;
-    while (!refalrts::empty_seq(content_b, content_e)) {
-        if (content_b->tag != refalrts::cDataNumber) break;
-        int tid = content_b->number_info;
-        torch::Tensor* t = tensor_storage::get(tid);
-        if (!t) return refalrts::cRecognitionImpossible;
-        tensors.push_back(*t);
-        refalrts::move_left(content_b, content_e);
+    while (!refalrts::empty_seq(list_b, list_e)) {
+        int64_t tid;
+        if (read_int(list_b, list_e, tid)) {
+            torch::Tensor* ptr = tensor_storage::get(tid);
+            if (ptr) tensors.push_back(*ptr);
+        } else {
+            // Skip non-integers if any
+            refalrts::move_left(list_b, list_e);
+        }
+    }
+    
+    int64_t dim = 0;
+    if (!refalrts::empty_seq(content_b, content_e)) {
+        read_int(content_b, content_e, dim);
     }
     
     if (tensors.empty()) return refalrts::cRecognitionImpossible;
     
-    torch::Tensor result = torch::cat(tensors, dim);
-    RETURN_TENSOR(result);
+    torch::Tensor res = torch::cat(tensors, dim);
+    int new_id = tensor_storage::store(res);
+    
+    refalrts::reinit_number(arg_begin, new_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
 %%
 }
-
 
 *==============================================================================
 * <TStack s.Dim s.Tensor1 s.Tensor2 ...> == s.TensorResult
@@ -355,29 +385,39 @@ $ENTRY TStack {
     refalrts::Iter content_b = 0, content_e = 0;
     refalrts::call_left(content_b, content_e, arg_begin, arg_end);
     
-    // First argument is dimension
-    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
-    int dim = content_b->number_info;
+    refalrts::Iter list_b = 0, list_e = 0;
+    if (!refalrts::brackets_term(list_b, list_e, content_b)) return refalrts::cRecognitionImpossible;
+    
+    // FIX: Properly skip the bracketed list
+    content_b = content_b->link_info;
     refalrts::move_left(content_b, content_e);
     
-    // Collect tensors
     std::vector<torch::Tensor> tensors;
-    while (!refalrts::empty_seq(content_b, content_e)) {
-        if (content_b->tag != refalrts::cDataNumber) break;
-        int tid = content_b->number_info;
-        torch::Tensor* t = tensor_storage::get(tid);
-        if (!t) return refalrts::cRecognitionImpossible;
-        tensors.push_back(*t);
-        refalrts::move_left(content_b, content_e);
+    while (!refalrts::empty_seq(list_b, list_e)) {
+        int64_t tid;
+        if (read_int(list_b, list_e, tid)) {
+            torch::Tensor* ptr = tensor_storage::get(tid);
+            if (ptr) tensors.push_back(*ptr);
+        } else {
+            refalrts::move_left(list_b, list_e);
+        }
+    }
+    
+    int64_t dim = 0;
+    if (!refalrts::empty_seq(content_b, content_e)) {
+        read_int(content_b, content_e, dim);
     }
     
     if (tensors.empty()) return refalrts::cRecognitionImpossible;
     
-    torch::Tensor result = torch::stack(tensors, dim);
-    RETURN_TENSOR(result);
+    torch::Tensor res = torch::stack(tensors, dim);
+    int new_id = tensor_storage::store(res);
+    
+    refalrts::reinit_number(arg_begin, new_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
 %%
 }
-
 
 *==============================================================================
 * <TVStack s.Tensor1 s.Tensor2 ...> == s.TensorResult
@@ -388,23 +428,34 @@ $ENTRY TVStack {
     refalrts::Iter content_b = 0, content_e = 0;
     refalrts::call_left(content_b, content_e, arg_begin, arg_end);
     
+    refalrts::Iter list_b = 0, list_e = 0;
+    if (!refalrts::brackets_term(list_b, list_e, content_b)) return refalrts::cRecognitionImpossible;
+    
+    // FIX: Properly skip the bracketed list
+    content_b = content_b->link_info;
+    refalrts::move_left(content_b, content_e);
+    
     std::vector<torch::Tensor> tensors;
-    while (!refalrts::empty_seq(content_b, content_e)) {
-        if (content_b->tag != refalrts::cDataNumber) break;
-        int tid = content_b->number_info;
-        torch::Tensor* t = tensor_storage::get(tid);
-        if (!t) return refalrts::cRecognitionImpossible;
-        tensors.push_back(*t);
-        refalrts::move_left(content_b, content_e);
+    while (!refalrts::empty_seq(list_b, list_e)) {
+        int64_t tid;
+        if (read_int(list_b, list_e, tid)) {
+            torch::Tensor* ptr = tensor_storage::get(tid);
+            if (ptr) tensors.push_back(*ptr);
+        } else {
+            refalrts::move_left(list_b, list_e);
+        }
     }
     
     if (tensors.empty()) return refalrts::cRecognitionImpossible;
     
-    torch::Tensor result = torch::vstack(tensors);
-    RETURN_TENSOR(result);
+    torch::Tensor res = torch::vstack(tensors);
+    int new_id = tensor_storage::store(res);
+    
+    refalrts::reinit_number(arg_begin, new_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
 %%
 }
-
 
 *==============================================================================
 * <THStack s.Tensor1 s.Tensor2 ...> == s.TensorResult
@@ -415,23 +466,34 @@ $ENTRY THStack {
     refalrts::Iter content_b = 0, content_e = 0;
     refalrts::call_left(content_b, content_e, arg_begin, arg_end);
     
+    refalrts::Iter list_b = 0, list_e = 0;
+    if (!refalrts::brackets_term(list_b, list_e, content_b)) return refalrts::cRecognitionImpossible;
+    
+    // FIX: Properly skip the bracketed list
+    content_b = content_b->link_info;
+    refalrts::move_left(content_b, content_e);
+    
     std::vector<torch::Tensor> tensors;
-    while (!refalrts::empty_seq(content_b, content_e)) {
-        if (content_b->tag != refalrts::cDataNumber) break;
-        int tid = content_b->number_info;
-        torch::Tensor* t = tensor_storage::get(tid);
-        if (!t) return refalrts::cRecognitionImpossible;
-        tensors.push_back(*t);
-        refalrts::move_left(content_b, content_e);
+    while (!refalrts::empty_seq(list_b, list_e)) {
+        int64_t tid;
+        if (read_int(list_b, list_e, tid)) {
+            torch::Tensor* ptr = tensor_storage::get(tid);
+            if (ptr) tensors.push_back(*ptr);
+        } else {
+            refalrts::move_left(list_b, list_e);
+        }
     }
     
     if (tensors.empty()) return refalrts::cRecognitionImpossible;
     
-    torch::Tensor result = torch::hstack(tensors);
-    RETURN_TENSOR(result);
+    torch::Tensor res = torch::hstack(tensors);
+    int new_id = tensor_storage::store(res);
+    
+    refalrts::reinit_number(arg_begin, new_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
 %%
 }
-
 
 *==============================================================================
 * SLICING AND INDEXING
@@ -695,15 +757,36 @@ $ENTRY TTile {
 *==============================================================================
 $ENTRY TFlip {
 %%
-    GET_ONE_TENSOR(id, t);
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
     
-    std::vector<int64_t> dims = read_int_list(content_b, content_e);
-    if (dims.empty()) {
-        return refalrts::cRecognitionImpossible;
+    int64_t id;
+    if (!read_int(content_b, content_e, id)) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) return refalrts::cRecognitionImpossible;
+    
+    refalrts::Iter dim_b = 0, dim_e = 0;
+    // Check if dims are wrapped in brackets (e.g. (0 1))
+    if (refalrts::brackets_term(dim_b, dim_e, content_b)) {
+        // Use the inner range for reading ints
+        // brackets_term sets dim_b/dim_e to the content INSIDE the brackets
+        // We don't need to manually move content_b past it if we use the inner iterator
+        // BUT for the outer flow, we must skip the bracketed term in content_b
+        refalrts::move_left(content_b, content_e); 
+    } else {
+        // Assume loose dims if no brackets (fallback)
+        dim_b = content_b;
+        dim_e = content_e;
     }
     
-    torch::Tensor result = t->flip(dims);
-    RETURN_TENSOR(result);
+    std::vector<int64_t> dims = read_int_list(dim_b, dim_e);
+    
+    torch::Tensor res = t->flip(dims);
+    int new_id = tensor_storage::store(res);
+    refalrts::reinit_number(arg_begin, new_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
 %%
 }
 

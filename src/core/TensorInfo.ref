@@ -15,7 +15,7 @@
 namespace tensor_storage {
     extern std::unordered_map<int, torch::Tensor> tensors;
     
-    torch::Tensor* get(int id) {
+    inline torch::Tensor* get(int id) {
         auto it = tensors.find(id);
         if (it != tensors.end()) {
             return &(it->second);

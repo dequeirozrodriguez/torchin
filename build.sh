@@ -73,6 +73,13 @@ else
     exit 1
 fi
 
+# Add test framework if building a test
+if [[ "$TARGET" == *"test/"* ]] || [[ "$TARGET" == *"test_"* ]]; then
+    echo "Adding test framework..."
+    # Insert test_framework before the test file
+    SOURCES=("${SOURCES[@]:0:${#SOURCES[@]}-1}" "$PROJECT_DIR/test/test_framework.ref" "${SOURCES[@]: -1}")
+fi
+
 echo "Sources:"
 for src in "${SOURCES[@]}"; do
     echo "  - $src"

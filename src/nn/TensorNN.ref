@@ -17,13 +17,13 @@ namespace tensor_storage {
     extern std::unordered_map<int, torch::Tensor> tensors;
     extern int next_id;
     
-    int store(torch::Tensor t) {
+    inline int store(torch::Tensor t) {
         int id = next_id++;
         tensors[id] = t;
         return id;
     }
     
-    torch::Tensor* get(int id) {
+    inline torch::Tensor* get(int id) {
         auto it = tensors.find(id);
         if (it != tensors.end()) {
             return &(it->second);
@@ -35,6 +35,28 @@ namespace tensor_storage {
 // Training mode flag (for dropout, batchnorm, etc.)
 namespace nn_state {
     bool training = true;
+}
+
+// Helpers
+inline std::vector<int64_t> read_int_list(refalrts::Iter& b, refalrts::Iter& e) {
+    std::vector<int64_t> result;
+    while (!refalrts::empty_seq(b, e)) {
+        if (b->tag == refalrts::cDataNumber) {
+            result.push_back(b->number_info);
+            refalrts::move_left(b, e);
+        } else {
+            break;
+        }
+    }
+    return result;
+}
+
+inline bool read_int(refalrts::Iter& b, refalrts::Iter& e, int64_t& val) {
+    if (refalrts::empty_seq(b, e)) return false;
+    if (b->tag != refalrts::cDataNumber) return false;
+    val = b->number_info;
+    refalrts::move_left(b, e);
+    return true;
 }
 
 #define GET_ONE_TENSOR(id, t) \
@@ -249,7 +271,7 @@ $ENTRY TSoftplus {
 $ENTRY TSoftsign {
 %%
     GET_ONE_TENSOR_ONLY(id, t);
-    torch::Tensor result = torch::softsign(*t);
+    torch::Tensor result = torch::nn::functional::softsign(*t);
     RETURN_TENSOR(result);
 %%
 }
@@ -465,16 +487,26 @@ $ENTRY TInitLinearKaiming {
 *==============================================================================
 $ENTRY TDropout {
 %%
-    GET_ONE_TENSOR(id, t);
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    int64_t id, prob_int, training;
+    if (!read_int(content_b, content_e, id)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, prob_int)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, training)) return refalrts::cRecognitionImpossible;
     
-    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
-    float p = content_b->number_info / 1000.0f;
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) return refalrts::cRecognitionImpossible;
     
-    torch::Tensor result = torch::dropout(*t, p, nn_state::training);
-    RETURN_TENSOR(result);
+    double p = static_cast<double>(prob_int) / 1000.0;
+    auto options = torch::nn::functional::DropoutFuncOptions().p(p).training(training != 0);
+    
+    int new_id = tensor_storage::store(torch::nn::functional::dropout(*t, options));
+    
+    refalrts::reinit_number(arg_begin, new_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
 %%
 }
-
 
 *==============================================================================
 * <TDropout2d s.TensorID s.P> == s.TensorResult
@@ -505,25 +537,37 @@ $ENTRY TDropout2d {
 *==============================================================================
 $ENTRY TLayerNorm {
 %%
-    GET_ONE_TENSOR(id, t);
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
     
-    std::vector<int64_t> normalized_shape;
-    while (!refalrts::empty_seq(content_b, content_e)) {
-        if (content_b->tag == refalrts::cDataNumber) {
-            normalized_shape.push_back(content_b->number_info);
-            refalrts::move_left(content_b, content_e);
-        } else {
-            break;
-        }
+    int64_t id;
+    if (!read_int(content_b, content_e, id)) return refalrts::cRecognitionImpossible;
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) return refalrts::cRecognitionImpossible;
+    
+    // FIX: Parse shape list (handles brackets correctly)
+    refalrts::Iter shape_b = 0, shape_e = 0;
+    if (refalrts::brackets_term(shape_b, shape_e, content_b)) {
+        // Points to inside brackets. 
+        // We MUST move the main iterator past the bracketed term.
+        content_b = content_b->link_info;
+        refalrts::move_left(content_b, content_e);
+    } else {
+        // Fallback for loose args
+        shape_b = content_b;
+        shape_e = content_e;
     }
     
-    if (normalized_shape.empty()) return refalrts::cRecognitionImpossible;
+    std::vector<int64_t> norm_shape = read_int_list(shape_b, shape_e);
     
-    torch::Tensor result = torch::layer_norm(*t, normalized_shape);
-    RETURN_TENSOR(result);
+    auto options = torch::nn::functional::LayerNormFuncOptions(norm_shape);
+    int new_id = tensor_storage::store(torch::nn::functional::layer_norm(*t, options));
+    
+    refalrts::reinit_number(arg_begin, new_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
 %%
 }
-
 
 *==============================================================================
 * <TLayerNormAffine s.Input s.Gamma s.Beta e.NormalizedShape> == s.TensorResult

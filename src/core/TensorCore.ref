@@ -15,16 +15,16 @@
 #include <sstream>
 
 namespace tensor_storage {
-    std::unordered_map<int, torch::Tensor> tensors;
-    int next_id = 1;
+    inline std::unordered_map<int, torch::Tensor> tensors;
+    inline int next_id = 1;
     
-    int store(torch::Tensor t) {
+    inline int store(torch::Tensor t) {
         int id = next_id++;
         tensors[id] = t;
         return id;
     }
     
-    torch::Tensor* get(int id) {
+    inline torch::Tensor* get(int id) {
         auto it = tensors.find(id);
         if (it != tensors.end()) {
             return &(it->second);
@@ -32,11 +32,11 @@ namespace tensor_storage {
         return nullptr;
     }
     
-    bool remove(int id) {
+    inline bool remove(int id) {
         return tensors.erase(id) > 0;
     }
     
-    void clear() {
+    inline void clear() {
         tensors.clear();
         next_id = 1;
     }
@@ -357,37 +357,63 @@ $ENTRY TFromList {
     refalrts::Iter content_b = 0, content_e = 0;
     refalrts::call_left(content_b, content_e, arg_begin, arg_end);
     
-    // Read shape from brackets
+    // --- 1. Read Shape: (rows cols) ---
     refalrts::Iter shape_b = 0, shape_e = 0;
-    if (!refalrts::brackets_term(shape_b, shape_e, content_b)) {
+    if (refalrts::empty_seq(content_b, content_e) || !refalrts::brackets_term(shape_b, shape_e, content_b)) {
         return refalrts::cRecognitionImpossible;
     }
-    refalrts::move_left(content_b, content_e);
     
     std::vector<int64_t> shape = read_int_list(shape_b, shape_e);
-    if (shape.empty()) {
-        return refalrts::cRecognitionImpossible;
+    if (shape.empty()) return refalrts::cRecognitionImpossible;
+
+    // FIX: Correctly skip the shape term
+    // content_b points to '(', link_info points to matching ')'
+    content_b = content_b->link_info; 
+    refalrts::move_left(content_b, content_e); // Move past ')'
+    
+    // --- 2. Read Values (Universal Handler) ---
+    refalrts::Iter val_b = 0, val_e = 0;
+    
+    // Check if next item is a bracketed list (TestCore style)
+    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataOpenBracket) {
+        refalrts::brackets_term(val_b, val_e, content_b);
+        // We iterate over the inner range val_b...val_e
+    } else {
+        // Loose mode (TestMath style)
+        val_b = content_b;
+        val_e = content_e;
     }
     
-    // Read values
     std::vector<float> values;
-    while (!refalrts::empty_seq(content_b, content_e)) {
-        if (content_b->tag == refalrts::cDataNumber) {
-            values.push_back(static_cast<float>(content_b->number_info));
-            refalrts::move_left(content_b, content_e);
-        } else {
-            break;
+    while (!refalrts::empty_seq(val_b, val_e)) {
+        if (val_b->tag == refalrts::cDataNumber) {
+            values.push_back(static_cast<float>(val_b->number_info));
+            refalrts::move_left(val_b, val_e);
+        } 
+        else if (val_b->tag == refalrts::cDataChar && val_b->char_info == '-') {
+            // Handle negative sign
+            refalrts::move_left(val_b, val_e); 
+            if (!refalrts::empty_seq(val_b, val_e) && val_b->tag == refalrts::cDataNumber) {
+                values.push_back(-1.0f * static_cast<float>(val_b->number_info));
+                refalrts::move_left(val_b, val_e);
+            } else {
+                return refalrts::cRecognitionImpossible;
+            }
+        } 
+        else {
+            return refalrts::cRecognitionImpossible;
         }
     }
     
-    // Check total size matches
+    // Check size
     int64_t expected_size = 1;
     for (auto dim : shape) expected_size *= dim;
+    
     if (static_cast<int64_t>(values.size()) != expected_size) {
         return refalrts::cRecognitionImpossible;
     }
     
-    // Create tensor
+    // Create Tensor
     torch::Tensor t = torch::from_blob(values.data(), shape, torch::kFloat32).clone();
     int id = tensor_storage::store(t);
     
@@ -396,7 +422,6 @@ $ENTRY TFromList {
     return refalrts::cSuccess;
 %%
 }
-
 
 *==============================================================================
 * <TToList s.TensorID> == e.Values

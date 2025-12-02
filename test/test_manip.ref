@@ -1,0 +1,276 @@
+* test_manip.ref - Tests for TensorManip operations
+* (Fixed AssertShape syntax and added $ENTRY)
+
+$EXTERN RunTests, AssertTrue, AssertEq;
+$EXTERN AssertShape, AssertDim, AssertNumel, AssertTensorClose, CombineResults;
+
+$EXTERN TZeros, TOnes, TFromList, TFree, TArange, TSetSeed;
+$EXTERN TReshape, TView, TFlatten;
+$EXTERN TTranspose, TT, TPermute, TContiguous;
+$EXTERN TSqueeze, TUnsqueeze;
+$EXTERN TCat, TStack, TVStack, THStack;
+$EXTERN TSlice, TSelect, TSplit;
+$EXTERN TRepeat, TFlip, TFlipLR;
+
+$ENTRY Go {
+  = <RunTests
+      TestReshape
+      TestView
+      TestFlatten
+      TestTranspose
+      TestTT
+      TestSqueeze
+      TestUnsqueeze
+      TestCat
+      TestStack
+      TestVStack
+      TestSlice
+      TestSelect
+      TestSplit
+      TestRepeat
+      TestFlip
+    >;
+}
+
+
+*==============================================================================
+* RESHAPE TESTS
+*==============================================================================
+
+$ENTRY TestReshape {
+  = <DoTestReshape <TArange 12>>;  /* [0..11] */
+}
+DoTestReshape {
+  s.T, <TReshape s.T 3 4> : s.R
+    = <CombineResults
+        <AssertShape ('reshape to 3x4') s.R 3 4>
+        <AssertNumel 'reshape preserves numel' s.R 12>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestView {
+  = <DoTestView <TArange 12>>;
+}
+DoTestView {
+  s.T, <TView s.T 2 6> : s.R
+    = <CombineResults
+        <AssertShape ('view to 2x6') s.R 2 6>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestFlatten {
+  = <DoTestFlatten <TZeros 2 3 4>>;
+}
+DoTestFlatten {
+  s.T, <TFlatten s.T 0 2> : s.R
+    = <CombineResults
+        <AssertDim 'flatten produces 1D' s.R 1>
+        <AssertNumel 'flatten preserves numel' s.R 24>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+*==============================================================================
+* TRANSPOSE TESTS
+*==============================================================================
+
+$ENTRY TestTranspose {
+  = <DoTestTranspose <TFromList (2 3) (1 2 3 4 5 6)>>;
+}
+DoTestTranspose {
+  s.T, <TTranspose s.T 0 1> : s.R
+    , <TFromList (3 2) (1 4 2 5 3 6)> : s.Expected
+    = <CombineResults
+        <AssertShape ('transpose shape') s.R 3 2>
+        <AssertTensorClose 'transpose values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+$ENTRY TestTT {
+  = <DoTestTT <TFromList (2 3) (1 2 3 4 5 6)>>;
+}
+DoTestTT {
+  s.T, <TT s.T> : s.R
+    = <CombineResults
+        <AssertShape ('t() shape') s.R 3 2>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+*==============================================================================
+* SQUEEZE TESTS
+*==============================================================================
+
+$ENTRY TestSqueeze {
+  = <DoTestSqueeze <TZeros 2 1 3 1>>;
+}
+DoTestSqueeze {
+  s.T, <TSqueeze s.T> : s.R
+    , <TSqueeze s.T 1> : s.R1
+    = <CombineResults
+        <AssertShape ('squeeze all') s.R 2 3>
+        <AssertShape ('squeeze dim 1') s.R1 2 3 1>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.R1> t.Res;
+}
+
+
+$ENTRY TestUnsqueeze {
+  = <DoTestUnsqueeze <TZeros 2 3>>;
+}
+DoTestUnsqueeze {
+  s.T, <TUnsqueeze s.T 0> : s.R0
+    , <TUnsqueeze s.T 2> : s.R2
+    = <CombineResults
+        <AssertShape ('unsqueeze dim 0') s.R0 1 2 3>
+        <AssertShape ('unsqueeze dim 2') s.R2 2 3 1>
+      >
+      : t.Res = <TFree s.T> <TFree s.R0> <TFree s.R2> t.Res;
+}
+
+
+*==============================================================================
+* COMBINE TESTS
+*==============================================================================
+
+$ENTRY TestCat {
+  = <DoTestCat <TFromList (2 2) (1 2 3 4)> 
+               <TFromList (2 2) (5 6 7 8)>>;
+}
+DoTestCat {
+  s.A s.B, <TCat (s.A s.B) 0> : s.R0
+    , <TCat (s.A s.B) 1> : s.R1
+    = <CombineResults
+        <AssertShape ('cat dim 0') s.R0 4 2>
+        <AssertShape ('cat dim 1') s.R1 2 4>
+      >
+      : t.Res = <TFree s.A> <TFree s.B> <TFree s.R0> <TFree s.R1> t.Res;
+}
+
+
+$ENTRY TestStack {
+  = <DoTestStack <TFromList (2) (1 2)> 
+                 <TFromList (2) (3 4)>>;
+}
+DoTestStack {
+  s.A s.B, <TStack (s.A s.B) 0> : s.R
+    = <CombineResults
+        <AssertShape ('stack dim 0') s.R 2 2>
+      >
+      : t.Res = <TFree s.A> <TFree s.B> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestVStack {
+  = <DoTestVStack <TFromList (2) (1 2)> 
+                  <TFromList (2) (3 4)>>;
+}
+DoTestVStack {
+  s.A s.B, <TVStack (s.A s.B)> : s.R
+    = <CombineResults
+        <AssertShape ('vstack') s.R 2 2>
+      >
+      : t.Res = <TFree s.A> <TFree s.B> <TFree s.R> t.Res;
+}
+
+
+*==============================================================================
+* SLICING TESTS
+*==============================================================================
+
+$ENTRY TestSlice {
+  = <DoTestSlice <TArange 10>>;
+}
+DoTestSlice {
+  s.T, <TSlice s.T 0 2 5 1> : s.R  /* dim 0, start 2, end 5, step 1 */
+    = <CombineResults
+        <AssertShape ('slice shape') s.R 3>
+        <AssertNumel 'slice numel' s.R 3>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestSelect {
+  = <DoTestSelect <TZeros 4 3 2>>;
+}
+DoTestSelect {
+  s.T, <TSelect s.T 1 2> : s.R  /* select index 2 on dim 1 */
+    = <CombineResults
+        <AssertShape ('select shape') s.R 4 2>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+$ENTRY TestSplit {
+  = <DoTestSplit <TArange 12>>;
+}
+
+DoTestSplit {
+  s.T, <TSplit s.T 4 0> : e.Chunks  /* split into size-4 chunks */
+    /* FIX: Wrap e.Chunks in parentheses ( ) so we can separate it from '3' */
+    = <CombineResults
+        <AssertTrue 'split creates 3 chunks' <CheckChunkCount (e.Chunks) 3>>
+      >
+      : t.Res = <TFree s.T> <FreeChunks e.Chunks> t.Res;
+}
+
+/* Helper: Takes (List) and Count. Calculates length and compares. */
+CheckChunkCount {
+  (e.Items) s.Expected
+    , <Len e.Items> : s.Actual
+    = <CompareEq s.Actual s.Expected>;
+}
+
+/* Standard recursive length function */
+Len {
+  = 0;
+  s.X e.Rest = <Add 1 <Len e.Rest>>;
+}
+
+/* Returns 1 if equal, 0 if not */
+CompareEq {
+  s.A s.A = 1;
+  s.A s.B = 0;
+}
+
+FreeChunks {
+  = ;
+  s.T e.Rest = <TFree s.T> <FreeChunks e.Rest>;
+}
+
+*==============================================================================
+* OTHER OPERATIONS
+*==============================================================================
+
+$ENTRY TestRepeat {
+  = <DoTestRepeat <TFromList (2 2) (1 2 3 4)>>;
+}
+DoTestRepeat {
+  s.T, <TRepeat s.T 2 1> : s.R
+    = <CombineResults
+        <AssertShape ('repeat shape') s.R 4 2>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestFlip {
+  = <DoTestFlip <TFromList (3) (0 1 2)>>;
+}
+DoTestFlip {
+  s.T, <TFlip s.T (0)> : s.R
+    , <TFromList (3) (2 1 0)> : s.Expected
+    = <CombineResults
+        <AssertTensorClose 'flip values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}

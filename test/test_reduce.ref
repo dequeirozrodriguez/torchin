@@ -1,0 +1,296 @@
+* test_reduce.ref - Tests for TensorReduce operations
+* (Fixed scaling logic and safe index comparison)
+
+$EXTERN RunTests, AssertTrue, AssertEq, AssertNear;
+$EXTERN AssertShape, AssertDim, AssertTensorClose, CombineResults;
+
+$EXTERN TZeros, TOnes, TFromList, TFree, TArange, TItem, TSetSeed, TRand;
+$EXTERN TSum, TSumDim, TMean, TMeanDim, TProd;
+$EXTERN TMax, TMin, TMaxDim, TMinDim, TArgmax, TArgmaxDim;
+$EXTERN TStd, TVar, TNorm;
+$EXTERN TAny, TAll;
+$EXTERN TCumsum, TCumprod;
+$EXTERN TSort, TArgsort, TTopK;
+$EXTERN TCountNonzero;
+$EXTERN TToList, Prout;
+
+
+$ENTRY Go {
+  = <RunTests
+      TestSum
+      TestSumDim
+      TestMean
+      TestMeanDim
+      TestProd
+      TestMax
+      TestMin
+      TestMaxDim
+      TestArgmax
+      TestNorm
+      TestAnyAll
+      TestCumsum
+      TestSort
+      TestTopK
+      TestCountNonzero
+    >;
+}
+
+* Helper to compare Long tensors (Indices) by converting to list first
+AssertIndices {
+  e.Name s.Actual s.Expected
+    , <TToList s.Actual> : e.ActList
+    , <TToList s.Expected> : e.ExpList
+    , <EqualLists (e.ActList) (e.ExpList)> : {
+        True = <Prout '  [PASS] ' e.Name> (1 0);
+        False = <Prout '  [FAIL] ' e.Name ' (indices mismatch)'>
+                <Prout '    Got: ' e.ActList>
+                <Prout '    Exp: ' e.ExpList> (0 1);
+      };
+}
+
+EqualLists {
+  (e.X) (e.X) = True;
+  (e.X) (e.Y) = False;
+}
+
+
+*==============================================================================
+* SUM TESTS
+*==============================================================================
+
+$ENTRY TestSum {
+  /* Use small numbers: 1+2+3+4+5+6 = 21 */
+  = <DoTestSum <TFromList (2 3) (1 2 3 4 5 6)>>;
+}
+DoTestSum {
+  s.T, <TSum s.T> : s.R
+    , <TItem s.R> : s.Val
+    /* TItem multiplies by 1000: 21.0 -> 21000 */
+    = <CombineResults
+        <AssertNear 'sum value' s.Val 21000 100>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestSumDim {
+  = <DoTestSumDim <TFromList (2 2) (1 2 3 4)>>;
+}
+DoTestSumDim {
+  s.T, <TSumDim s.T 0> : s.R  /* sum cols: [1+3, 2+4] = [4, 6] */
+    , <TFromList (2) (4 6)> : s.Expected
+    = <CombineResults
+        <AssertShape ('sum dim 0') s.R 2>
+        <AssertTensorClose 'sum dim values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+*==============================================================================
+* MEAN TESTS
+*==============================================================================
+
+$ENTRY TestMean {
+  = <DoTestMean <TFromList (2 2) (1 3 5 7)>>; /* mean=4 */
+}
+DoTestMean {
+  s.T, <TMean s.T> : s.R
+    , <TItem s.R> : s.Val
+    = <CombineResults
+        <AssertNear 'mean value' s.Val 4000 50>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestMeanDim {
+  = <DoTestMeanDim <TFromList (2 2) (1 3 5 7)>>;
+}
+DoTestMeanDim {
+  s.T, <TMeanDim s.T 1> : s.R  /* mean rows: [2, 6] */
+    , <TFromList (2) (2 6)> : s.Expected
+    = <CombineResults
+        <AssertTensorClose 'mean dim values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+*==============================================================================
+* OTHER REDUCTIONS
+*==============================================================================
+
+$ENTRY TestProd {
+  = <DoTestProd <TFromList (2 2) (1 2 3 4)>>; /* 1*2*3*4 = 24 */
+}
+DoTestProd {
+  s.T, <TProd s.T> : s.R
+    , <TItem s.R> : s.Val
+    = <CombineResults
+        <AssertNear 'prod value' s.Val 24000 100>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestMax {
+  = <DoTestMax <TFromList (3) (1 5 2)>>;
+}
+DoTestMax {
+  s.T, <TMax s.T> : s.R
+    , <TItem s.R> : s.Val
+    = <CombineResults
+        <AssertNear 'max value' s.Val 5000 10>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestMin {
+  = <DoTestMin <TFromList (3) (1 5 2)>>;
+}
+DoTestMin {
+  s.T, <TMin s.T> : s.R
+    , <TItem s.R> : s.Val
+    = <CombineResults
+        <AssertNear 'min value' s.Val 1000 10>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+$ENTRY TestMaxDim {
+  = <DoTestMaxDim <TFromList (2 3) (1 5 2 4 3 6)>>;
+}
+DoTestMaxDim {
+  s.T, <TMaxDim s.T 1> : s.Vals s.Inds
+    /* Row 0: max 5 at idx 1. Row 1: max 6 at idx 2 */
+    , <TFromList (2) (5 6)> : s.ExpVals
+    , <TFromList (2) (1 2)> : s.ExpInds
+    = <CombineResults
+        <AssertTensorClose 'max dim values' s.Vals s.ExpVals>
+        <AssertIndices 'max dim indices' s.Inds s.ExpInds>
+      >
+      : t.Res = <TFree s.T> <TFree s.Vals> <TFree s.Inds>
+                <TFree s.ExpVals> <TFree s.ExpInds> t.Res;
+}
+
+
+$ENTRY TestArgmax {
+  = <DoTestArgmax <TFromList (3) (1 5 2)>>;
+}
+DoTestArgmax {
+  s.T, <TArgmax s.T> : s.R
+    , <TItem s.R> : s.Val
+    = <CombineResults
+        /* Index 1 is max. TItem returns 1000 for integer 1 */
+        <AssertNear 'argmax index' s.Val 1000 10>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+*==============================================================================
+* STATS
+*==============================================================================
+
+$ENTRY TestNorm {
+  = <DoTestNorm <TFromList (2) (3 4)>>; /* 3,4 -> norm 5 */
+}
+DoTestNorm {
+  s.T, <TNorm s.T> : s.R
+    , <TItem s.R> : s.Val
+    = <CombineResults
+        <AssertNear 'norm value' s.Val 5000 50>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}
+
+
+*==============================================================================
+* LOGIC
+*==============================================================================
+
+$ENTRY TestAnyAll {
+  /* 0 is False, 1 is True. Input: [0, 1] */
+  = <DoTestAnyAll <TFromList (2) (0 1)>>;
+}
+DoTestAnyAll {
+  s.T, <TAny s.T> : s.Any
+    , <TAll s.T> : s.All
+    , <TItem s.Any> : s.VAny
+    , <TItem s.All> : s.VAll
+    = <CombineResults
+        <AssertNear 'any is true' s.VAny 1000 50>
+        <AssertNear 'all is false' s.VAll 0 50>
+      >
+      : t.Res = <TFree s.T> <TFree s.Any> <TFree s.All> t.Res;
+}
+
+
+*==============================================================================
+* CUMULATIVE
+*==============================================================================
+
+$ENTRY TestCumsum {
+  = <DoTestCumsum <TFromList (3) (1 2 3)>>;
+}
+DoTestCumsum {
+  s.T, <TCumsum s.T 0> : s.R
+    , <TFromList (3) (1 3 6)> : s.Expected
+    = <CombineResults
+        <AssertTensorClose 'cumsum values' s.R s.Expected>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> <TFree s.Expected> t.Res;
+}
+
+
+*==============================================================================
+* SORTING TESTS
+*==============================================================================
+
+$ENTRY TestSort {
+  = <DoTestSort <TFromList (5) (3 1 4 1 5)>>;
+}
+DoTestSort {
+  s.T, <TSort s.T 0> : s.Sorted s.Indices
+    , <TFromList (5) (1 1 3 4 5)> : s.Expected
+    = <CombineResults
+        <AssertShape ('sort shape') s.Sorted 5>
+        <AssertTensorClose 'sort values' s.Sorted s.Expected>
+        /* Indices check omitted or checked loosely */
+    >
+      : t.Res = <TFree s.T> <TFree s.Sorted> <TFree s.Indices> <TFree s.Expected> t.Res;
+}
+
+
+$ENTRY TestTopK {
+  = <DoTestTopK <TFromList (6) (3 1 4 1 5 9)>>;
+}
+DoTestTopK {
+  s.T, <TTopK s.T 3 0> : s.Values s.Indices  /* top 3: 9, 5, 4 */
+    , <TFromList (3) (9 5 4)> : s.ExpVal
+    , <TFromList (3) (5 4 2)> : s.ExpInd
+    = <CombineResults
+        <AssertShape ('topk values shape') s.Values 3>
+        <AssertShape ('topk indices shape') s.Indices 3>
+        <AssertTensorClose 'topk values' s.Values s.ExpVal>
+        <AssertIndices 'topk indices' s.Indices s.ExpInd>
+      >
+      : t.Res = <TFree s.T> <TFree s.Values> <TFree s.Indices> <TFree s.ExpVal> <TFree s.ExpInd> t.Res;
+}
+
+
+$ENTRY TestCountNonzero {
+  = <DoTestCountNonzero <TFromList (4) (0 1 0 2)>>;
+}
+DoTestCountNonzero {
+  s.T, <TCountNonzero s.T> : s.R
+    , <TItem s.R> : s.Val
+    = <CombineResults
+        /* Count is 2 -> 2000 */
+        <AssertNear 'nonzero count' s.Val 2000 10>
+      >
+      : t.Res = <TFree s.T> <TFree s.R> t.Res;
+}

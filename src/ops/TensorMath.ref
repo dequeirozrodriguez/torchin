@@ -15,13 +15,13 @@ namespace tensor_storage {
     extern std::unordered_map<int, torch::Tensor> tensors;
     extern int next_id;
     
-    int store(torch::Tensor t) {
+    inline int store(torch::Tensor t) {
         int id = next_id++;
         tensors[id] = t;
         return id;
     }
     
-    torch::Tensor* get(int id) {
+    inline torch::Tensor* get(int id) {
         auto it = tensors.find(id);
         if (it != tensors.end()) {
             return &(it->second);

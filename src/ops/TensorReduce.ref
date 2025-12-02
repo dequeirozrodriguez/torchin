@@ -14,13 +14,13 @@ namespace tensor_storage {
     extern std::unordered_map<int, torch::Tensor> tensors;
     extern int next_id;
     
-    int store(torch::Tensor t) {
+    inline int store(torch::Tensor t) {
         int id = next_id++;
         tensors[id] = t;
         return id;
     }
     
-    torch::Tensor* get(int id) {
+    inline torch::Tensor* get(int id) {
         auto it = tensors.find(id);
         if (it != tensors.end()) {
             return &(it->second);
@@ -735,7 +735,7 @@ $ENTRY TArgsort {
     if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
     int dim = content_b->number_info;
     
-    torch::Tensor result = t->argsort(dim).to(torch::kFloat32);
+    torch::Tensor result = t->argsort(dim, false).to(torch::kFloat32);
     RETURN_TENSOR(result);
 %%
 }
@@ -800,7 +800,7 @@ $ENTRY TCountNonzeroDim {
     if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
     int dim = content_b->number_info;
     
-    torch::Tensor result = torch::count_nonzero(*t, dim).to(torch::kFloat32);
+    torch::Tensor result = torch::count_nonzero(*t, std::optional<int64_t>(dim)).to(torch::kFloat32);
     RETURN_TENSOR(result);
 %%
 }

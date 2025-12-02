@@ -18,13 +18,13 @@ namespace tensor_storage {
     extern std::unordered_map<int, torch::Tensor> tensors;
     extern int next_id;
     
-    int store(torch::Tensor t) {
+    inline int store(torch::Tensor t) {
         int id = next_id++;
         tensors[id] = t;
         return id;
     }
     
-    torch::Tensor* get(int id) {
+    inline torch::Tensor* get(int id) {
         auto it = tensors.find(id);
         if (it != tensors.end()) {
             return &(it->second);
@@ -141,7 +141,7 @@ $ENTRY TSaveMany {
     while (!refalrts::empty_seq(content_b, content_e)) {
         if (content_b->tag == refalrts::cDataOpenBracket) {
             refalrts::Iter inner_b = 0, inner_e = 0;
-            refalrts::bracket_left(inner_b, inner_e, content_b, content_e);
+            refalrts::brackets_left(inner_b, inner_e, content_b, content_e);
             
             if (inner_b->tag != refalrts::cDataNumber) break;
             int tid = inner_b->number_info;
@@ -172,7 +172,7 @@ $ENTRY TSaveMany {
         for (size_t i = 0; i < tensors.size(); i++) {
             items.push_back(tensors[i]);
         }
-        torch::save(items, filename);
+        torch::save(tensors, filename);
         RETURN_SUCCESS();
     } catch (...) {
         RETURN_FAILURE();
@@ -186,6 +186,7 @@ $ENTRY TSaveMany {
 * Load multiple tensors from a file saved with TSaveMany
 * Returns list of tensor IDs in parentheses
 *==============================================================================
+
 $ENTRY TLoadMany {
 %%
     refalrts::Iter content_b = 0, content_e = 0;
@@ -195,26 +196,24 @@ $ENTRY TLoadMany {
     if (filename.empty()) return refalrts::cRecognitionImpossible;
     
     try {
-        std::vector<torch::IValue> items;
-        torch::load(items, filename);
+        std::vector<torch::Tensor> tensors;
+        torch::load(tensors, filename);
         
         refalrts::reset_allocator(vm);
         refalrts::Iter first = 0, last = 0;
         
-        for (auto& item : items) {
-            if (item.isTensor()) {
-                int tid = tensor_storage::store(item.toTensor());
-                
-                refalrts::Iter open, close, num;
-                refalrts::alloc_open_bracket(vm, open);
-                refalrts::alloc_number(vm, num, tid);
-                refalrts::alloc_close_bracket(vm, close);
-                
-                refalrts::link_brackets(open, close);
-                
-                if (first == 0) first = open;
-                last = close;
-            }
+        for (auto& tensor : tensors) {
+            int tid = tensor_storage::store(tensor);  // ✅ Direct storage
+            
+            refalrts::Iter open, close, num;
+            refalrts::alloc_open_bracket(vm, open);
+            refalrts::alloc_number(vm, num, tid);
+            refalrts::alloc_close_bracket(vm, close);
+            
+            refalrts::link_brackets(open, close);
+            
+            if (first == 0) first = open;
+            last = close;
         }
         
         if (first) {
@@ -227,7 +226,6 @@ $ENTRY TLoadMany {
     }
 %%
 }
-
 
 *==============================================================================
 * TEXT FORMAT (human readable)

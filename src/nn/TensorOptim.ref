@@ -15,13 +15,13 @@ namespace tensor_storage {
     extern std::unordered_map<int, torch::Tensor> tensors;
     extern int next_id;
     
-    int store(torch::Tensor t) {
+    inline int store(torch::Tensor t) {
         int id = next_id++;
         tensors[id] = t;
         return id;
     }
     
-    torch::Tensor* get(int id) {
+    inline torch::Tensor* get(int id) {
         auto it = tensors.find(id);
         if (it != tensors.end()) {
             return &(it->second);
@@ -31,15 +31,36 @@ namespace tensor_storage {
 }
 
 // Storage for Adam optimizer state (momentum and velocity per parameter)
-namespace adam_state {
-    std::unordered_map<int, torch::Tensor> m;  // First moment
-    std::unordered_map<int, torch::Tensor> v;  // Second moment
-    std::unordered_map<int, int> t;            // Timestep
-}
+//namespace adam_state {
+//    std::unordered_map<int, torch::Tensor> m;  // First moment
+//    std::unordered_map<int, torch::Tensor> v;  // Second moment
+//    std::unordered_map<int, int> t;            // Timestep
+//}
 
 // Storage for SGD momentum
 namespace sgd_state {
     std::unordered_map<int, torch::Tensor> velocity;
+}
+
+namespace adam_state {
+    std::unordered_map<int, torch::Tensor> m;
+    std::unordered_map<int, torch::Tensor> v;
+    std::unordered_map<int, int64_t> t; 
+    
+    void clear() {
+        m.clear();
+        v.clear();
+        t.clear(); 
+    }
+}
+
+// Helper read_int
+inline bool read_int(refalrts::Iter& b, refalrts::Iter& e, int64_t& val) {
+    if (refalrts::empty_seq(b, e)) return false;
+    if (b->tag != refalrts::cDataNumber) return false;
+    val = b->number_info;
+    refalrts::move_left(b, e);
+    return true;
 }
 
 #define GET_ONE_TENSOR(id, t) \
@@ -257,20 +278,36 @@ $ENTRY TZeroGradAll {
 *==============================================================================
 $ENTRY TUpdateSGD {
 %%
-    GET_ONE_TENSOR(id, t);
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
     
-    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
-    float lr = content_b->number_info / 1000.0f;
+    int64_t id, lr_int;
+    if (!read_int(content_b, content_e, id)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, lr_int)) return refalrts::cRecognitionImpossible;
     
-    if (t->grad().defined()) {
+    torch::Tensor* t = tensor_storage::get(id);
+    
+    // Safety check: if tensor is missing or has no grad, do nothing
+    if (!t || !t->grad().defined()) {
+        refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+        return refalrts::cSuccess;
+    }
+    
+    float lr = static_cast<float>(lr_int) / 1000.0f;
+    
+    std::cout << "SGD Update: LR=" << lr << " GradNorm=" << t->grad().norm().item<float>() << std::endl;
+
+    // --- CRITICAL FIX: DISABLE GRADIENT TRACKING ---
+    {
         torch::NoGradGuard no_grad;
         t->sub_(t->grad() * lr);
     }
+    // -----------------------------------------------
     
-    RETURN_VOID();
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
 %%
 }
-
 
 *==============================================================================
 * <TUpdateSGDMomentum s.ParamID s.LR s.Momentum> ==
@@ -317,65 +354,69 @@ $ENTRY TUpdateSGDMomentum {
 *==============================================================================
 $ENTRY TUpdateAdam {
 %%
-    GET_ONE_TENSOR(id, t);
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
     
-    if (content_b->tag != refalrts::cDataNumber) return refalrts::cRecognitionImpossible;
-    float lr = content_b->number_info / 1000.0f;
-    refalrts::move_left(content_b, content_e);
+    // Read 5 args: id, lr, beta1, beta2, epsilon
+    int64_t id, lr_i, b1_i, b2_i, eps_i;
+    if (!read_int(content_b, content_e, id)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, lr_i)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, b1_i)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, b2_i)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, eps_i)) return refalrts::cRecognitionImpossible;
     
-    float beta1 = 0.9f, beta2 = 0.999f, eps = 1e-8f;
-    
-    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
-        beta1 = content_b->number_info / 1000.0f;
-        refalrts::move_left(content_b, content_e);
-    }
-    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
-        beta2 = content_b->number_info / 1000.0f;
-        refalrts::move_left(content_b, content_e);
-    }
-    if (!refalrts::empty_seq(content_b, content_e) && content_b->tag == refalrts::cDataNumber) {
-        eps = content_b->number_info / 1000000.0f;  // eps uses /1000000
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t || !t->grad().defined()) {
+        refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+        return refalrts::cSuccess;
     }
     
-    if (!t->grad().defined()) {
-        RETURN_VOID();
-    }
+    // Scale parameters
+    float lr = lr_i / 1000.0f;
+    float b1 = b1_i / 1000.0f;
+    float b2 = b2_i / 1000.0f;
+    float eps = (eps_i == 1) ? 1e-8 : (eps_i / 1000.0f); // Handle small epsilon safely
     
-    torch::NoGradGuard no_grad;
-    
-    // Initialize state if not exists
-    if (adam_state::m.find(id) == adam_state::m.end()) {
+    // Init state if missing
+    if (adam_state::t.find(id) == adam_state::t.end()) {
+        adam_state::t[id] = 0;
         adam_state::m[id] = torch::zeros_like(*t);
         adam_state::v[id] = torch::zeros_like(*t);
-        adam_state::t[id] = 0;
     }
     
-    adam_state::t[id]++;
-    int timestep = adam_state::t[id];
+    // --- CRITICAL FIX: DISABLE GRADIENT TRACKING ---
+    {
+        torch::NoGradGuard no_grad;
+        
+        adam_state::t[id]++;
+        int64_t step_val = adam_state::t[id];
+
+        auto& m = adam_state::m[id];
+        auto& v = adam_state::v[id];
+        auto grad = t->grad();
+        
+        // m = b1*m + (1-b1)*g
+        m.mul_(b1).add_(grad, 1.0 - b1);
+        
+        // v = b2*v + (1-b2)*g*g
+        v.mul_(b2).addcmul_(grad, grad, 1.0 - b2);
+        
+        // Bias correction
+        float bias_corr1 = 1.0 - std::pow(b1, step_val);
+        float bias_corr2 = 1.0 - std::pow(b2, step_val);
+        
+        torch::Tensor m_hat = m / bias_corr1;
+        torch::Tensor v_hat = v / bias_corr2;
+        
+        // w = w - lr * m_hat / (sqrt(v_hat) + eps)
+        t->sub_(m_hat.mul(lr).div_(v_hat.sqrt().add_(eps)));
+    }
+    // -----------------------------------------------
     
-    torch::Tensor& m = adam_state::m[id];
-    torch::Tensor& v = adam_state::v[id];
-    torch::Tensor g = t->grad();
-    
-    // Update biased first moment estimate
-    m = beta1 * m + (1 - beta1) * g;
-    // Update biased second moment estimate
-    v = beta2 * v + (1 - beta2) * g * g;
-    
-    // Compute bias-corrected estimates
-    float bias_correction1 = 1 - std::pow(beta1, timestep);
-    float bias_correction2 = 1 - std::pow(beta2, timestep);
-    
-    torch::Tensor m_hat = m / bias_correction1;
-    torch::Tensor v_hat = v / bias_correction2;
-    
-    // Update parameters
-    t->sub_(lr * m_hat / (torch::sqrt(v_hat) + eps));
-    
-    RETURN_VOID();
+    refalrts::splice_to_freelist(vm, arg_begin, arg_end);
+    return refalrts::cSuccess;
 %%
 }
-
 
 *==============================================================================
 * <TUpdateAdamW s.ParamID s.LR s.Beta1 s.Beta2 s.Eps s.WeightDecay> ==

@@ -1,0 +1,18 @@
+$INCLUDE "RefTorch";
+
+$ENTRY Go {
+  = <Main>;
+}
+
+Main {
+  = <Prout 'Testing Causal Mask (Size 4)...'>
+    <DoTest>;
+}
+
+DoTest {
+  = <TCausalMask 4> : s.Mask
+    <Prout 'Mask Tensor ID: ' s.Mask>
+    <Prout 'Values (Expect 0.0 in lower tri, -inf in upper):'>
+    <TPrint s.Mask>
+    <TFree s.Mask>;
+}

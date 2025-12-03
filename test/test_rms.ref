@@ -1,0 +1,21 @@
+$INCLUDE "RefTorch";
+
+$ENTRY Go {
+  = <Main>;
+}
+
+Main {
+  = <Prout 'Testing RMSNorm...'>
+    /* Input: [1.0, 1.0] -> Squares: [1,1] -> Mean: 1 -> RMS: 1 -> Norm: [1,1] */
+    <TestRMS <TFromList (2) (1000 1000)>>;
+}
+
+TestRMS {
+  s.T
+    /* Weight [1.0, 1.0], Epsilon 1e-6 (1) */
+    = <TRMSNorm s.T <TOnes 2> 1> : s.Out
+      <Prout 'Input:'> <TPrint s.T>
+      <Prout 'Result (Should be approx 1.0, 1.0):'> 
+      <TPrint s.Out>
+      <TFreeAll>;
+}

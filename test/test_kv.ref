@@ -1,0 +1,30 @@
+$INCLUDE "RefTorch";
+
+$ENTRY Go {
+  = <Main>;
+}
+
+Main {
+  = <Prout 'Testing KV Cache Update...'>
+    <DoTest>;
+}
+
+DoTest {
+  = /* 1. Create Empty Cache (size 5) filled with zeros */
+    <TZeros (5)> : s.Cache
+    <Prout 'Empty Cache:'> <TPrint s.Cache>
+    
+    /* 2. Insert "10" at pos 0 */
+    <TUpdateSlice s.Cache <TFromList (1) (10)> 0 0> : s.Cache
+    
+    /* 3. Insert "20" at pos 1 */
+    <TUpdateSlice s.Cache <TFromList (1) (20)> 0 1> : s.Cache
+    
+    /* 4. Insert "30" at pos 2 */
+    <TUpdateSlice s.Cache <TFromList (1) (30)> 0 2> : s.Cache
+    
+    <Prout 'Filled Cache (Expect 10, 20, 30, 0, 0):'>
+    <TPrint s.Cache>
+    
+    <TFreeAll>;
+}

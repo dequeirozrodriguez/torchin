@@ -1060,3 +1060,218 @@ $ENTRY TInitEmbedding {
     RETURN_TENSOR(table);
 %%
 }
+
+/* ============================================================================
+ * RMSNorm (Root Mean Square Layer Normalization)
+ * Formula: x * rsqrt(mean(x^2) + eps) * weight
+ * ========================================================================== */
+$ENTRY TRMSNorm {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t x_id, w_id, eps_int;
+    if (!read_int(content_b, content_e, x_id)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, w_id)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, eps_int)) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor* x = tensor_storage::get(x_id);
+    torch::Tensor* w = tensor_storage::get(w_id);
+    
+    if (!x || !w) return refalrts::cRecognitionImpossible;
+    
+    //scaling Epsilon (1 = 1e-6)
+    double eps = static_cast<double>(eps_int) / 1000000.0;
+    
+    //calculations
+    //converting to Float32 for numerical stability
+    auto input_dtype = x->dtype();
+    torch::Tensor x_fp32 = x->to(torch::kFloat32);
+    
+    torch::Tensor variance = x_fp32.pow(2).mean(-1, true);
+    
+    //normalizing x / sqrt(var + eps)
+    torch::Tensor hidden_states = x_fp32 * torch::rsqrt(variance + eps);
+    
+    //casting back to original type and multiply by learned weight
+    torch::Tensor result = hidden_states.to(input_dtype) * (*w);
+    
+    //result
+    int new_id = tensor_storage::store(result);
+    
+    refalrts::reinit_number(arg_begin, new_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+/* ============================================================================
+ * PRECOMPUTE FREQUENCIES (RoPE Helper)
+ * Generates the 'cis' matrix (cos + i*sin) for RoPE.
+ *
+ * <TPrecomputeFreqs s.Dim s.MaxSeqLen s.Theta>
+ * s.Dim: Head Dimension (e.g., 128)
+ * s.MaxSeqLen: Context window (e.g., 4096)
+ * s.Theta: Base frequency (usually 10000.0 or 1000000.0 for Llama 3)
+ * Passed as integer scaled by 1 (e.g. 10000 -> 10000)
+ * ========================================================================== */
+$ENTRY TPrecomputeFreqs {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t dim, max_seq, theta_int;
+    if (!read_int(content_b, content_e, dim)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, max_seq)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, theta_int)) return refalrts::cRecognitionImpossible;
+    
+    float theta = static_cast<float>(theta_int);
+    
+    //calculating frequencies: theta ^ (-2i / dim)
+    auto arange = torch::arange(0, dim, 2).to(torch::kFloat);
+    auto freqs = 1.0 / torch::pow(theta, arange / dim);
+    
+    //creating grid: [0, 1, ..., max_seq-1]
+    auto t = torch::arange(0, max_seq).to(torch::kFloat);
+    
+    //outer product -> (seq_len, dim/2)
+    //freqs: [dim/2], t: [seq] -> [seq, dim/2]
+    auto freqs_outer = torch::outer(t, freqs);
+    
+    //polar form: mag=1, angle=freqs_outer -> cos + i*sin
+    //shape: [seq, dim/2] (complex64)
+    auto freqs_cis = torch::polar(torch::ones_like(freqs_outer), freqs_outer);
+    
+    //storing as real tensor with last dim 2: [seq, dim/2, 2]
+    //this makes it compatible with view_as_complex later
+    int new_id = tensor_storage::store(torch::view_as_real(freqs_cis));
+    
+    refalrts::reinit_number(arg_begin, new_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+
+/* ============================================================================
+ * APPLY RoPE (Rotary Positional Embeddings)
+ * Rotates input tensor x using precomputed frequencies.
+ *
+ * <TRoPE s.X s.FreqsCis>
+ * s.X: Input [Batch, SeqLen, Heads, HeadDim]
+ * s.FreqsCis: [SeqLen, HeadDim/2, 2] (from TPrecomputeFreqs)
+ * ========================================================================== */
+$ENTRY TRoPE {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t x_id, freqs_id;
+    if (!read_int(content_b, content_e, x_id)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, freqs_id)) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor* x = tensor_storage::get(x_id);
+    torch::Tensor* freqs_real = tensor_storage::get(freqs_id);
+    
+    if (!x || !freqs_real) return refalrts::cRecognitionImpossible;
+    
+    //reshaping X for complex multiplication
+    //X shape: [B, Seq, H, D] -> [B, Seq, H, D/2, 2]
+    //we assume D is the last dimension.
+    auto x_float = x->to(torch::kFloat32); // RoPE usually done in FP32
+    auto x_reshaped = x_float.reshape({
+        x_float.size(0), // Batch
+        x_float.size(1), // Seq
+        x_float.size(2), // Head
+        -1,              // HeadDim / 2
+        2                // Real/Imag pairs
+    });
+    
+    //converting both to complex views
+    auto x_complex = torch::view_as_complex(x_reshaped);
+    auto freqs_complex = torch::view_as_complex(*freqs_real);
+    
+    //teshaping Freqs for broadcasting
+    //freqs: [Seq, D/2] -> [1, Seq, 1, D/2]
+    //this allows broadcasting across Batch and Heads
+    auto freqs_broadcast = freqs_complex.view({
+        1, 
+        freqs_complex.size(0), 
+        1, 
+        freqs_complex.size(1)
+    });
+    
+    //applying Rotation (Complex Multiplication)
+    //(a+bi)(c+di) = (ac-bd) + (ad+bc)i
+    //this performs the rotation: x' = x * e^(i*theta)
+    auto x_rotated = x_complex * freqs_broadcast;
+    
+    //reshaping back to real
+    //[B, S, H, D/2] (complex) -> [B, S, H, D/2, 2] (real) -> [B, S, H, D]
+    auto x_out = torch::view_as_real(x_rotated).flatten(3);
+    
+    //returning cast to original type
+    int new_id = tensor_storage::store(x_out.to(x->dtype()));
+    
+    refalrts::reinit_number(arg_begin, new_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+/* ============================================================================
+ * SwiGLU ACTIVATION
+ * Computes: SiLU(Gate) * Value
+ *
+ * <TSwiGLU s.Gate s.Value>
+ * s.Gate:  Output of the "Gate" linear layer
+ * s.Value: Output of the "Up" linear layer
+ * ========================================================================== */
+$ENTRY TSwiGLU {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t g_id, v_id;
+    if (!read_int(content_b, content_e, g_id)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, v_id)) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor* gate = tensor_storage::get(g_id);
+    torch::Tensor* val = tensor_storage::get(v_id);
+    
+    if (!gate || !val) return refalrts::cRecognitionImpossible;
+    
+    // SiLU(x) = x * sigmoid(x)
+    // SwiGLU = SiLU(gate) * val
+    torch::Tensor result = torch::silu(*gate) * (*val);
+    
+    int new_id = tensor_storage::store(result);
+    
+    refalrts::reinit_number(arg_begin, new_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+/* ============================================================================
+ * SiLU Activation (Sigmoid Linear Unit)
+ * Output = x * sigmoid(x)
+ * ========================================================================== */
+$ENTRY TSilu {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t id;
+    if (!read_int(content_b, content_e, id)) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) return refalrts::cRecognitionImpossible;
+    
+    int new_id = tensor_storage::store(torch::silu(*t));
+    
+    refalrts::reinit_number(arg_begin, new_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}

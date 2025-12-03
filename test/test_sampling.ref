@@ -1,0 +1,123 @@
+* test_sampling.ref - Tests for LLM Activation and Sampling functions
+*
+* Covers:
+* - TSilu (Activation)
+* - TTopKMask (Filter)
+* - TTopPMask (Nucleus Filter)
+
+$INCLUDE "RefTorch";
+
+$ENTRY Go {
+  = <Main>;
+}
+
+Main {
+  = <Prout '=== RefTorch Phase 5: Sampling & Activations ==='>
+    <Prout ''>
+    <TestSiLU>
+    <TestTopK>
+    <TestTopP>
+    <Cleanup>;
+}
+
+
+*------------------------------------------------------------------------------
+* 1. Test SiLU (Sigmoid Linear Unit)
+* Formula: x * sigmoid(x)
+*------------------------------------------------------------------------------
+TestSiLU {
+  = <Prout '--- Test 1: SiLU ---'>
+    <DoSiLU>;
+}
+
+DoSiLU {
+  e.In
+    /* Create input: [-10.0, 0.0, 10.0] (scaled x1000) */
+    , <TFromList (3) (<Sub 0 10000> 0 10000)> : s.T
+    , <Prout 'Input:'> : e.I1
+    , <TPrint s.T> : e.I2
+    
+    , <TSilu s.T> : s.Out
+    , <Prout 'SiLU Output:'> : e.I3
+    , <TPrint s.Out> : e.I4
+    
+    /* Expected:
+       -10 -> ~0 (vanishes)
+         0 -> 0
+        10 -> 10 (passes through)
+    */
+    , <TFree s.T> : e.F1
+    , <TFree s.Out> : e.F2
+    = <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* 2. Test Top-K Masking
+*------------------------------------------------------------------------------
+TestTopK {
+  = <Prout '--- Test 2: Top-K Masking (K=2) ---'>
+    <DoTopK>;
+}
+
+DoTopK {
+  e.In
+    /* Logits: [10, 1, 8, 2, 5] */
+    /* Top 2 are 10 and 8. Others should become -inf */
+    , <TFromList (5) (10000 1000 8000 2000 5000)> : s.Logits
+    , <Prout 'Original Logits:'> : e.I1
+    , <TPrint s.Logits> : e.I2
+    
+    , <TTopKMask s.Logits 2> : s.Masked
+    , <Prout 'Top-K (K=2) Result:'> : e.I3
+    , <TPrint s.Masked> : e.I4
+    
+    , <TFree s.Logits> : e.F1
+    , <TFree s.Masked> : e.F2
+    = <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* 3. Test Top-P (Nucleus) Masking
+*------------------------------------------------------------------------------
+TestTopP {
+  = <Prout '--- Test 3: Top-P Masking (P=0.5) ---'>
+    <DoTopP>;
+}
+
+DoTopP {
+  e.In
+    /* Logits: [10, 9, 2, 1]
+       Softmax Probs approx:
+       10 -> ~0.73
+        9 -> ~0.26
+       Others -> ~0.0
+       
+       Cumulative: 0.73 (Step 1).
+       
+       If P=0.5:
+       0.73 > 0.5, so we stop after the first token.
+       Only '10' should remain. '9' should be filtered.
+    */
+    , <TFromList (4) (10000 9000 2000 1000)> : s.Logits
+    , <Prout 'Original Logits:'> : e.I1
+    , <TPrint s.Logits> : e.I2
+    
+    /* P = 0.5 (500/1000) */
+    , <TTopPMask s.Logits 500> : s.Masked
+    , <Prout 'Top-P (P=0.5) Result:'> : e.I3
+    , <TPrint s.Masked> : e.I4
+    
+    , <TFree s.Logits> : e.F1
+    , <TFree s.Masked> : e.F2
+    = <Prout ''>;
+}
+
+
+*------------------------------------------------------------------------------
+* Helpers
+*------------------------------------------------------------------------------
+Cleanup {
+  = <TFreeAll> <Prout 'All tensors freed.'>;
+}

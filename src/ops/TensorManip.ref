@@ -856,3 +856,189 @@ $ENTRY TRoll {
     RETURN_TENSOR(result);
 %%
 }
+
+/* ============================================================================
+ * CAUSAL MASK (Attention Mask)
+ * Creates a square matrix [Size, Size].
+ * Upper triangle (future) = -inf
+ * Lower triangle (past)   = 0
+ * ========================================================================== */
+$ENTRY TCausalMask {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t size;
+    if (!read_int(content_b, content_e, size)) return refalrts::cRecognitionImpossible;
+    
+    //creating matrix full of -infinity
+    torch::Tensor mask = torch::full({size, size}, -INFINITY);
+    
+    //keeping upper triangle (diagonal + 1), set rest to 0.
+    // Result: 
+    // 0  -inf -inf
+    // 0   0   -inf
+    // 0   0    0
+    // (Note: torch::triu zeroes out the *other* part, so we pass -inf tensor)
+    mask = torch::triu(mask, 1);
+    
+    int new_id = tensor_storage::store(mask);
+    
+    refalrts::reinit_number(arg_begin, new_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+/* ============================================================================
+ * UPDATE SLICE (In-Place)
+ * Efficiently updates a portion of a tensor. Critical for KV Cache.
+ *
+ * <TUpdateSlice s.Dest s.Src s.Dim s.Start>
+ * s.Dest: Target tensor (e.g. KV Cache)
+ * s.Src:  Source data (e.g. New Token Key/Value)
+ * s.Dim:  Dimension to write along (e.g. Sequence dimension)
+ * s.Start: Starting index
+ * ========================================================================== */
+$ENTRY TUpdateSlice {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t dest_id, src_id, dim, start;
+    if (!read_int(content_b, content_e, dest_id)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, src_id)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, dim)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, start)) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor* dest = tensor_storage::get(dest_id);
+    torch::Tensor* src = tensor_storage::get(src_id);
+    
+    if (!dest || !src) return refalrts::cRecognitionImpossible;
+    
+    // Safety check: ensure we don't write out of bounds
+    int64_t len = src->size(dim);
+    if (start + len > dest->size(dim)) {
+        // Fail silently or print error? For now, just return dest unmodified to avoid crash
+        // Ideally: print error to stderr
+        std::cerr << "RefTorch Error: TUpdateSlice out of bounds!" << std::endl;
+    } else {
+        // The Magic: In-place copy
+        // dest[dim, start:start+len] = src
+        dest->narrow(dim, start, len).copy_(*src);
+    }
+    
+    // Return original ID
+    refalrts::reinit_number(arg_begin, dest_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+/* ============================================================================
+ * TOP-K MASKING
+ * Sets all values except the largest K to -infinity.
+ * <TTopKMask s.Logits s.K s.FilterVal>
+ * s.K: Number of top elements to keep
+ * s.FilterVal: Value to fill filtered elements (usually -inf)
+ * ========================================================================== */
+$ENTRY TTopKMask {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t id, k;
+    double filter_val = -INFINITY; // Default
+    
+    if (!read_int(content_b, content_e, id)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, k)) return refalrts::cRecognitionImpossible;
+    
+    // Optional 3rd arg: filter value (if user wants 0.0 instead of -inf)
+    if (content_b && content_b->tag == refalrts::cDataNumber) {
+        filter_val = static_cast<double>(content_b->number_info);
+        //note: passing -inf from Refal is hard, so we assume standard behavior 
+        //if arg is missing, or user passes specific integer.
+    }
+    
+    torch::Tensor* logits = tensor_storage::get(id);
+    if (!logits) return refalrts::cRecognitionImpossible;
+    
+    if (k > 0 && k < logits->size(-1)) {
+        
+        auto topk = torch::topk(*logits, k, -1);
+        auto values = std::get<0>(topk);
+        
+        auto cutoff = values.select(-1, k - 1).unsqueeze(-1);
+        
+        //creating a mask where logits < cutoff
+        //setting those to -inf
+        torch::Tensor result = torch::where(*logits < cutoff, 
+                                          torch::tensor(filter_val, logits->options()), 
+                                          *logits);
+        
+        int new_id = tensor_storage::store(result);
+        refalrts::reinit_number(arg_begin, new_id);
+    } else {
+        //K invalid or larger than vocab? Return clone.
+        int new_id = tensor_storage::store(logits->clone());
+        refalrts::reinit_number(arg_begin, new_id);
+    }
+    
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
+/* ============================================================================
+ * TOP-P MASKING (Nucleus Sampling)
+ * Keeps the top tokens with cumulative probability >= P.
+ * <TTopPMask s.Logits s.P> (P scaled by 1000, e.g. 900 = 0.9)
+ * ========================================================================== */
+$ENTRY TTopPMask {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t id, p_int;
+    if (!read_int(content_b, content_e, id)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, p_int)) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor* logits = tensor_storage::get(id);
+    if (!logits) return refalrts::cRecognitionImpossible;
+    
+    double p = static_cast<double>(p_int) / 1000.0;
+    
+    if (p <= 0.0 || p >= 1.0) {
+        int new_id = tensor_storage::store(logits->clone());
+        refalrts::reinit_number(arg_begin, new_id);
+    } else {
+        
+        auto sorted = torch::sort(*logits, -1, true);
+        auto sorted_logits = std::get<0>(sorted);
+        auto sorted_indices = std::get<1>(sorted);
+        
+        auto cumulative_probs = torch::softmax(sorted_logits, -1).cumsum(-1);
+        
+        //creating mask for removal
+        //removing tokens with cumulative probability > p (but keeping the first one that crosses threshold)
+        //shifting mask right by 1 to always keep the first token
+        auto sorted_indices_to_remove = cumulative_probs > p;
+        sorted_indices_to_remove.narrow(-1, 1, sorted_indices_to_remove.size(-1) - 1)
+                                .copy_(sorted_indices_to_remove.narrow(-1, 0, sorted_indices_to_remove.size(-1) - 1).clone());
+        sorted_indices_to_remove.select(-1, 0) = false;
+        
+        //scaterring mask back to original indices
+        auto indices_to_remove = torch::zeros_like(sorted_indices_to_remove).to(torch::kBool);
+        indices_to_remove.scatter_(-1, sorted_indices, sorted_indices_to_remove);
+        
+        //applyoing -inf
+        torch::Tensor result = logits->masked_fill(indices_to_remove, -INFINITY);
+        
+        int new_id = tensor_storage::store(result);
+        refalrts::reinit_number(arg_begin, new_id);
+    }
+    
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}

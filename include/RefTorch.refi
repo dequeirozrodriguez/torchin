@@ -274,6 +274,13 @@ $EXTERN TInitConv2d;     /* <TInitConv2d s.InCh s.OutCh s.KH s.KW> == s.W s.B */
 $EXTERN TEmbedding;      /* <TEmbedding s.Indices s.Table> == s.Result */
 $EXTERN TInitEmbedding;  /* <TInitEmbedding s.Vocab s.Dim> == s.Table */
 
+* LLM
+$EXTERN TRMSNorm;     /* <TRMSNorm s.Input s.Weight s.Eps> (Eps x10^6) */
+$EXTERN TPrecomputeFreqs; /* <TPrecomputeFreqs s.Dim s.MaxSeq s.Theta> */
+$EXTERN TRoPE;            /* <TRoPE s.X s.Freqs> */
+$EXTERN TCausalMask;  /* <TCausalMask s.Size> */
+$EXTERN TUpdateSlice; /* <TUpdateSlice s.Dest s.Src s.Dim s.Start> */
+$EXTERN TSwiGLU;      /* <TSwiGLU s.Gate s.Value> */
 
 *==============================================================================
 * TensorLoss - Loss Functions

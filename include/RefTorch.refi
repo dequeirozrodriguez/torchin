@@ -281,7 +281,9 @@ $EXTERN TRoPE;            /* <TRoPE s.X s.Freqs> */
 $EXTERN TCausalMask;  /* <TCausalMask s.Size> */
 $EXTERN TUpdateSlice; /* <TUpdateSlice s.Dest s.Src s.Dim s.Start> */
 $EXTERN TSwiGLU;      /* <TSwiGLU s.Gate s.Value> */
-
+$EXTERN TTopKMask;    /* <TTopKMask s.Logits s.K> */
+$EXTERN TTopPMask;    /* <TTopPMask s.Logits s.P_x1000> */
+$EXTERN TSilu;        /* <TSilu s.T> */
 *==============================================================================
 * TensorLoss - Loss Functions
 *==============================================================================

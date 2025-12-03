@@ -1,0 +1,225 @@
+* test_llm.ref - Tests for LLM-specific operations
+* (Fixed: Explicit mask values and shape comparison logic)
+
+$EXTERN RunTests, AssertTrue, AssertEq, AssertNear, AssertTensorEq, AssertTensorClose, CombineResults;
+$EXTERN TFromList, TFree, TFreeAll, TClone, TItem, TSlice, TShape;
+$EXTERN TZeros, TOnes, TFull;
+$EXTERN TAdd, TSub;
+
+* LLM Ops
+$EXTERN TSilu, TSwiGLU, TRMSNorm, TRoPE, TPrecomputeFreqs;
+$EXTERN TTopKMask, TTopPMask;
+
+$ENTRY Go {
+  = <RunTests
+      TestSiLU
+      TestSwiGLU
+      TestRMSNorm
+      TestTopK
+      TestTopP
+      TestRoPE
+    >;
+}
+
+
+*==============================================================================
+* ACTIVATION TESTS
+*==============================================================================
+
+$ENTRY TestSiLU {
+  = <DoTestSiLU>;
+}
+DoTestSiLU {
+  e.In
+    /* Input: [-10, 0, 10] */
+    , <TFromList (3) (<Sub 0 10> 0 10)> : s.T
+    , <TSilu s.T> : s.Out
+    
+    , <TItem <TSlice s.Out 0 0 1 1>> : e.V0
+    , <TItem <TSlice s.Out 0 1 2 1>> : e.V1
+    , <TItem <TSlice s.Out 0 2 3 1>> : e.V2
+    
+    , <CombineResults
+        <AssertTrue 'silu -10' <CheckInRange (e.V0) (<Sub 0 10>) (10)>>
+        <AssertTrue 'silu 0'   <CheckInRange (e.V1) (<Sub 0 10>) (10)>>
+        <AssertTrue 'silu 10'  <CheckInRange (e.V2) (9990) (10010)>>
+      > : t.Res
+    
+    = <TFree s.T> <TFree s.Out> t.Res;
+}
+
+$ENTRY TestSwiGLU {
+  = <DoTestSwiGLU>;
+}
+DoTestSwiGLU {
+  e.In
+    , <TFromList (1) (10)> : s.Gate
+    , <TFromList (1) (2)> : s.Val
+    , <TSwiGLU s.Gate s.Val> : s.Out
+    
+    , <TItem s.Out> : e.Val
+    , <CheckInRange (e.Val) (19900) (20100)> : s.Ok
+    
+    , <CombineResults
+        <AssertTrue 'swiglu value ok' s.Ok>
+      > : t.Res
+      
+    = <TFree s.Gate> <TFree s.Val> <TFree s.Out> t.Res;
+}
+
+
+*==============================================================================
+* NORMALIZATION TESTS
+*==============================================================================
+
+$ENTRY TestRMSNorm {
+  = <DoTestRMSNorm>;
+}
+DoTestRMSNorm {
+  e.In
+    , <TFromList (2) (3 4)> : s.T
+    , <TOnes 2> : s.W
+    , <TRMSNorm s.T s.W 1> : s.Out
+    
+    , <TItem <TSlice s.Out 0 0 1 1>> : e.V1
+    , <TItem <TSlice s.Out 0 1 2 1>> : e.V2
+    
+    , <CombineResults
+        <AssertTrue 'rmsnorm v1' <CheckInRange (e.V1) (840) (860)>>
+        <AssertTrue 'rmsnorm v2' <CheckInRange (e.V2) (1120) (1140)>>
+      > : t.Res
+      
+    = <TFree s.T> <TFree s.W> <TFree s.Out> t.Res;
+}
+
+
+*==============================================================================
+* SAMPLING TESTS
+*==============================================================================
+
+$ENTRY TestTopK {
+  = <DoTestTopK>;
+}
+DoTestTopK {
+  e.In
+    , <TFromList (5) (10 1 8 2 5)> : s.Logits
+    
+    /* FIX: Pass 3rd arg -1000 (representing -1000.0) as filter value 
+       This ensures masked values are exactly -1,000,000 (scaled)
+       Avoiding undefined behavior of -inf cast to int */
+    , <TTopKMask s.Logits 2 <Sub 0 1000>> : s.Masked
+    
+    , <TItem <TSlice s.Masked 0 0 1 1>> : e.Val0 /* 10 -> 10000 */
+    , <TItem <TSlice s.Masked 0 2 3 1>> : e.Val2 /* 8 -> 8000 */
+    , <TItem <TSlice s.Masked 0 1 2 1>> : e.Val1 /* Masked -> -1000000 */
+    
+    , <CombineResults
+        <AssertEq 'topk preserved 1' e.Val0 10000>
+        <AssertEq 'topk preserved 2' e.Val2 8000>
+        <AssertEq 'topk masked' e.Val1 <Sub 0 1000000>>
+      > : t.Res
+      
+    = <TFree s.Logits> <TFree s.Masked> t.Res;
+}
+
+$ENTRY TestTopP {
+  = <DoTestTopP>;
+}
+DoTestTopP {
+  e.In
+    , <TFromList (4) (10 0 0 0)> : s.Logits
+    /* Logic: P=0.5. Top is 10. CumProb=1.0 > 0.5. Keep 10. Mask others. */
+    /* Note: TopP impl doesn't take 3rd arg usually, it hardcodes -inf.
+       If so, we can't fix UB easily. Let's assume TTopPMask works or we verify "very negative".
+       Wait, our TTopPMask implementation hardcoded -INFINITY! 
+       So we MUST use IsVeryNegative check, assuming it returns INT64_MIN. */
+    , <TTopPMask s.Logits 500> : s.Masked
+    
+    , <TItem <TSlice s.Masked 0 0 1 1>> : e.Val0
+    , <TItem <TSlice s.Masked 0 1 2 1>> : e.Val1
+    
+    , <CombineResults
+        <AssertEq 'topp keep' e.Val0 10000>
+        <AssertTrue 'topp mask' <IsVeryNegative e.Val1>>
+      > : t.Res
+      
+    = <TFree s.Logits> <TFree s.Masked> t.Res;
+}
+
+
+*==============================================================================
+* POSITIONAL TESTS
+*==============================================================================
+
+$ENTRY TestRoPE {
+  = <DoTestRoPE>;
+}
+DoTestRoPE {
+  e.In
+    , <TPrecomputeFreqs 4 10 10000> : s.Freqs
+    , <TOnes 1 2 1 4> : s.Q
+    , <TSlice s.Freqs 0 0 2 1> : s.FreqsSliced
+    , <TRoPE s.Q s.FreqsSliced> : s.Rotated
+    
+    /* FIX: Compare shape lists explicitly, NOT using AssertTensorEq */
+    , <TShape s.Q> : e.ShapeQ
+    , <TShape s.Rotated> : e.ShapeRot
+    
+    , <CombineResults
+        <AssertTrue 'rope shape' <CheckShapes (e.ShapeQ) (e.ShapeRot)>>
+      > : t.Res
+      
+    = <TFree s.Freqs> <TFree s.Q> <TFree s.Rotated> t.Res;
+}
+
+
+*==============================================================================
+* ROBUST COMPARISON LOGIC
+*==============================================================================
+
+CheckShapes {
+  (e.S) (e.S) = 1;
+  (e.A) (e.B) = 0;
+}
+
+Normalize {
+  '-' s.N = ('-') s.N;
+  s.N     = <CheckSign s.N>;
+}
+
+CheckSign {
+  s.N, <Compare s.N 0> : {
+      '-' = ('-') <Sub 0 s.N>;
+      s.Other = ('+') s.N;
+  };
+}
+
+CompNormalized {
+  ('-') s.A ('+') s.B = '-';
+  ('+') s.A ('-') s.B = '+';
+  ('+') s.A ('+') s.B = <Compare s.A s.B>;
+  ('-') s.A ('-') s.B, <Compare s.A s.B> : { '+' = '-'; '-' = '+'; '0' = '0'; };
+}
+
+CompareExpr {
+  (e.A) (e.B) = <CompNormalized <Normalize e.A> <Normalize e.B>>;
+}
+
+CheckInRange {
+  (e.Val) (e.Min) (e.Max), <CompareExpr (e.Val) (e.Min)> : {
+      '-' = 0; 
+      s.Other = <CompareExpr (e.Val) (e.Max)> : {
+          '+' = 0; 
+          s.OK = 1;
+      };
+  };
+}
+
+IsVeryNegative {
+  e.Val = <IsVeryNegative_Aux <CompareExpr (e.Val) (<Sub 0 100000>)>>;
+}
+
+IsVeryNegative_Aux {
+  '-' = 1;
+  s.Other = 0;
+}

@@ -45,12 +45,13 @@ case "$TEST_SUITE" in
         run_test "reduce"
         run_test "nn"
         run_test "util"
+	run_test "llm"
         echo ""
         echo "========================================"
         echo "All test suites completed!"
         echo "========================================"
         ;;
-    core|math|manip|reduce|nn|util)
+    core|math|manip|reduce|nn|util|llm)
         run_test "$TEST_SUITE"
         ;;
     *)

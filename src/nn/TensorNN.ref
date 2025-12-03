@@ -1252,26 +1252,3 @@ $ENTRY TSwiGLU {
     return refalrts::cSuccess;
 %%
 }
-
-/* ============================================================================
- * SiLU Activation (Sigmoid Linear Unit)
- * Output = x * sigmoid(x)
- * ========================================================================== */
-$ENTRY TSilu {
-%%
-    refalrts::Iter content_b = 0, content_e = 0;
-    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
-    
-    int64_t id;
-    if (!read_int(content_b, content_e, id)) return refalrts::cRecognitionImpossible;
-    
-    torch::Tensor* t = tensor_storage::get(id);
-    if (!t) return refalrts::cRecognitionImpossible;
-    
-    int new_id = tensor_storage::store(torch::silu(*t));
-    
-    refalrts::reinit_number(arg_begin, new_id);
-    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
-    return refalrts::cSuccess;
-%%
-}

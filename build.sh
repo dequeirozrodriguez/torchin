@@ -15,34 +15,12 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 echo -e "${YELLOW}=== Refal-Torch Build ===${NC}"
-echo "LIBTORCH: $LIBTORCH"
-echo "REFAL_HOME: $REFAL_HOME"
-echo "PROJECT_DIR: $PROJECT_DIR"
-echo ""
-
-# Checks
-if [ ! -d "$LIBTORCH" ]; then
-    echo -e "${RED}Error: LIBTORCH directory not found: $LIBTORCH${NC}"
-    exit 1
-fi
-if [ ! -d "$REFAL_HOME" ]; then
-    echo -e "${RED}Error: REFAL_HOME directory not found: $REFAL_HOME${NC}"
-    exit 1
-fi
-
-export LIBTORCH
-export REFAL_HOME
-
-# Clean previous builds (garbage .cpp files in root)
-echo -e "${YELLOW}Cleaning previous builds...${NC}"
-rm -f "$PROJECT_DIR"/*.cpp "$PROJECT_DIR"/*.rasl "$PROJECT_DIR"/*.o
-rm -f RefTorch.refi  # Clean up potential leftover link
 
 # Target setup
 TARGET="${1:-examples/01_basic_tensors}"
-OUTPUT="${2:-01_basic_tensors}" 
+OUTPUT="${2:-program}"
 
-# Define Sources
+# Define Standard Library Sources
 SOURCES=(
     "$REFAL_HOME/lib/src/Library.ref"
     "$PROJECT_DIR/src/core/TensorCore.ref"
@@ -67,31 +45,36 @@ else
     exit 1
 fi
 
+# --- THE MISSING PART I FORGOT ---
+# If building a test, inject the test framework source
+if [[ "$TARGET" == *"test/"* ]] || [[ "$TARGET" == *"test_"* ]]; then
+    echo "Adding test framework..."
+    # Insert test_framework before the last file (the target)
+    SOURCES=("${SOURCES[@]:0:${#SOURCES[@]}-1}" "$PROJECT_DIR/test/test_framework.ref" "${SOURCES[@]: -1}")
+fi
+# ---------------------------------
+
+# Header Fix
 echo -e "${YELLOW}Preparing Header...${NC}"
-# FIX: Copy header to root so rlc finds it in Current Working Directory
 if [ -f "$PROJECT_DIR/include/RefTorch.refi" ]; then
     cp "$PROJECT_DIR/include/RefTorch.refi" "$PROJECT_DIR/RefTorch.refi"
-else
-    echo -e "${RED}Error: include/RefTorch.refi not found!${NC}"
-    exit 1
 fi
 
+# Export vars for wrapper
+export LIBTORCH
+export REFAL_HOME
+
 echo -e "${YELLOW}Compiling...${NC}"
-# rlc command:
-# -x  : Build executable
-# -Od : Debug mode (faster compile, easier debugging)
-# -c  : Specifies the C++ compiler wrapper command
 rlc -x -Od --prefix= \
     -c "$PROJECT_DIR/torch-g++.sh -Wall -g -o" \
     "${SOURCES[@]}" \
     -o "$PROJECT_DIR/$OUTPUT"
 
-# Cleanup header
+# Cleanup
 rm -f "$PROJECT_DIR/RefTorch.refi"
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}Build successful: $PROJECT_DIR/$OUTPUT${NC}"
-    echo "Run with: ./$OUTPUT"
 else
     echo -e "${RED}Build failed${NC}"
     exit 1

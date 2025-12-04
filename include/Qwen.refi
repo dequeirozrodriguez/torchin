@@ -1,15 +1,63 @@
-* Qwen.refi - Header for Qwen3 Inference
+* Qwen.refi - Public API for Qwen3 / Qwen2.5 Inference
+*
+* Include this file to use the Qwen model in your Refal program.
+* $INCLUDE "Qwen";
 
 $INCLUDE "RefTorch";
 
-* Configuration Constructors
+*==============================================================================
+* 1. CONFIGURATION (QwenConfig.ref)
+*==============================================================================
+* Get standard configurations
 $EXTERN Qwen3Config_0_6B;
-$EXTERN ConfigGet;
+$EXTERN Qwen3Config_1_7B;
+$EXTERN Qwen3Config_4B;
 
-* Weight Loading
-* <LoadQwenWeights s.Path s.NumLayers>
+* Access values: <ConfigGet (e.Cfg) 'hidden_size'>
+$EXTERN ConfigGet;
+$EXTERN ConfigHeadDim, ConfigKVHeadDim, ConfigQDim;
+
+
+*==============================================================================
+* 2. WEIGHT LOADING (WeightLoader.ref)
+*==============================================================================
+* Load weights from directory
+* Usage: <LoadQwenWeights 'path/to/weights' s.NumLayers> : s.Weights
 $EXTERN LoadQwenWeights;
 
-* Generation
-* <QwenGenerate s.Weights (e.Cfg) s.PromptTokens s.MaxNew>
+
+*==============================================================================
+* 3. MODEL & STATE (QwenModel.ref)
+*==============================================================================
+* Initialize a new empty state (KV cache)
+* Usage: <QwenModelInit (e.Cfg)> : (e.State)
+$EXTERN QwenModelInit;
+
+* Free model resources
+$EXTERN QwenModelFree;
+
+
+*==============================================================================
+* 4. GENERATION (QwenGenerate.ref)
+*==============================================================================
+* Core Generator
+* Usage: <QwenGenerate (e.State) (e.Tokens) s.Max s.Mode (e.Params)>
 $EXTERN QwenGenerate;
+
+* Convenience Wrappers
+* <QwenGenerateGreedy (e.State) (e.Tokens) s.Max>
+$EXTERN QwenGenerateGreedy;
+
+* <QwenGenerateTemp (e.State) (e.Tokens) s.Max s.Temp> (Temp x1000)
+$EXTERN QwenGenerateTemp;
+
+* <QwenGenerateTopK (e.State) (e.Tokens) s.Max s.Temp s.K>
+$EXTERN QwenGenerateTopK;
+
+
+*==============================================================================
+* 5. CLI ENTRY POINTS (Qwen3Main.ref)
+*==============================================================================
+* Run the standard CLI interface
+$EXTERN Go;
+$EXTERN RunInference;

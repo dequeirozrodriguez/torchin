@@ -1,5 +1,15 @@
+* Qwen.refi - Header for Qwen3 Inference
+
 $INCLUDE "RefTorch";
 
-$EXTERN LoadQwenWeights;
-$EXTERN QwenGenerate;
+* Configuration Constructors
+$EXTERN Qwen3Config_0_6B;
 $EXTERN ConfigGet;
+
+* Weight Loading
+* <LoadQwenWeights s.Path s.NumLayers>
+$EXTERN LoadQwenWeights;
+
+* Generation
+* <QwenGenerate s.Weights (e.Cfg) s.PromptTokens s.MaxNew>
+$EXTERN QwenGenerate;

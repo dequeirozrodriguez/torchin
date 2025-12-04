@@ -948,30 +948,30 @@ $ENTRY TTopKMask {
     refalrts::call_left(content_b, content_e, arg_begin, arg_end);
     
     int64_t id, k;
-    double filter_val = -INFINITY; // Default
+    double filter_val = -1000000.0; // Default safe negative
     
     if (!read_int(content_b, content_e, id)) return refalrts::cRecognitionImpossible;
     if (!read_int(content_b, content_e, k)) return refalrts::cRecognitionImpossible;
     
-    // Optional 3rd arg: filter value (if user wants 0.0 instead of -inf)
-    if (content_b && content_b->tag == refalrts::cDataNumber) {
-        filter_val = static_cast<double>(content_b->number_info);
-        //note: passing -inf from Refal is hard, so we assume standard behavior 
-        //if arg is missing, or user passes specific integer.
+    // Check for optional magnitude
+    if (!refalrts::empty_seq(content_b, content_e)) {
+        int64_t val;
+        // Just read a simple number. No complex '-' handling needed.
+        if (content_b->tag == refalrts::cDataNumber) {
+             val = content_b->number_info;
+             // We treat this as magnitude and flip sign
+             filter_val = -1.0 * std::abs(static_cast<double>(val));
+        }
     }
     
     torch::Tensor* logits = tensor_storage::get(id);
     if (!logits) return refalrts::cRecognitionImpossible;
     
     if (k > 0 && k < logits->size(-1)) {
-        
         auto topk = torch::topk(*logits, k, -1);
         auto values = std::get<0>(topk);
-        
         auto cutoff = values.select(-1, k - 1).unsqueeze(-1);
         
-        //creating a mask where logits < cutoff
-        //setting those to -inf
         torch::Tensor result = torch::where(*logits < cutoff, 
                                           torch::tensor(filter_val, logits->options()), 
                                           *logits);
@@ -979,7 +979,6 @@ $ENTRY TTopKMask {
         int new_id = tensor_storage::store(result);
         refalrts::reinit_number(arg_begin, new_id);
     } else {
-        //K invalid or larger than vocab? Return clone.
         int new_id = tensor_storage::store(logits->clone());
         refalrts::reinit_number(arg_begin, new_id);
     }
@@ -988,11 +987,12 @@ $ENTRY TTopKMask {
     return refalrts::cSuccess;
 %%
 }
-
 /* ============================================================================
  * TOP-P MASKING (Nucleus Sampling)
  * Keeps the top tokens with cumulative probability >= P.
- * <TTopPMask s.Logits s.P> (P scaled by 1000, e.g. 900 = 0.9)
+ * <TTopPMask s.Logits s.P s.FilterVal>
+ * s.P: Cumulative probability threshold (x1000, e.g. 900 = 0.9)
+ * s.FilterVal: Value to replace filtered tokens (default -inf)
  * ========================================================================== */
 $ENTRY TTopPMask {
 %%
@@ -1000,8 +1000,18 @@ $ENTRY TTopPMask {
     refalrts::call_left(content_b, content_e, arg_begin, arg_end);
     
     int64_t id, p_int;
+    double filter_val = -1000000.0;
+    
     if (!read_int(content_b, content_e, id)) return refalrts::cRecognitionImpossible;
     if (!read_int(content_b, content_e, p_int)) return refalrts::cRecognitionImpossible;
+    
+    if (!refalrts::empty_seq(content_b, content_e)) {
+        int64_t val;
+        if (content_b->tag == refalrts::cDataNumber) {
+             val = content_b->number_info;
+             filter_val = -1.0 * std::abs(static_cast<double>(val));
+        }
+    }
     
     torch::Tensor* logits = tensor_storage::get(id);
     if (!logits) return refalrts::cRecognitionImpossible;
@@ -1012,27 +1022,21 @@ $ENTRY TTopPMask {
         int new_id = tensor_storage::store(logits->clone());
         refalrts::reinit_number(arg_begin, new_id);
     } else {
-        
         auto sorted = torch::sort(*logits, -1, true);
         auto sorted_logits = std::get<0>(sorted);
         auto sorted_indices = std::get<1>(sorted);
         
         auto cumulative_probs = torch::softmax(sorted_logits, -1).cumsum(-1);
-        
-        //creating mask for removal
-        //removing tokens with cumulative probability > p (but keeping the first one that crosses threshold)
-        //shifting mask right by 1 to always keep the first token
         auto sorted_indices_to_remove = cumulative_probs > p;
+        
         sorted_indices_to_remove.narrow(-1, 1, sorted_indices_to_remove.size(-1) - 1)
                                 .copy_(sorted_indices_to_remove.narrow(-1, 0, sorted_indices_to_remove.size(-1) - 1).clone());
         sorted_indices_to_remove.select(-1, 0) = false;
         
-        //scaterring mask back to original indices
         auto indices_to_remove = torch::zeros_like(sorted_indices_to_remove).to(torch::kBool);
         indices_to_remove.scatter_(-1, sorted_indices, sorted_indices_to_remove);
         
-        //applyoing -inf
-        torch::Tensor result = logits->masked_fill(indices_to_remove, -INFINITY);
+        torch::Tensor result = logits->masked_fill(indices_to_remove, filter_val);
         
         int new_id = tensor_storage::store(result);
         refalrts::reinit_number(arg_begin, new_id);

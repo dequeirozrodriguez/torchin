@@ -1,10 +1,10 @@
 * test_llm.ref - Tests for LLM-specific operations
-* (Fixed: Explicit mask values and shape comparison logic)
+* (Fixed: Large literal workaround using runtime calculation)
 
 $EXTERN RunTests, AssertTrue, AssertEq, AssertNear, AssertTensorEq, AssertTensorClose, CombineResults;
 $EXTERN TFromList, TFree, TFreeAll, TClone, TItem, TSlice, TShape;
 $EXTERN TZeros, TOnes, TFull;
-$EXTERN TAdd, TSub;
+$EXTERN TAdd, TSub, TMul;
 
 * LLM Ops
 $EXTERN TSilu, TSwiGLU, TRMSNorm, TRoPE, TPrecomputeFreqs;
@@ -31,7 +31,6 @@ $ENTRY TestSiLU {
 }
 DoTestSiLU {
   e.In
-    /* Input: [-10, 0, 10] */
     , <TFromList (3) (<Sub 0 10> 0 10)> : s.T
     , <TSilu s.T> : s.Out
     
@@ -39,10 +38,14 @@ DoTestSiLU {
     , <TItem <TSlice s.Out 0 1 2 1>> : e.V1
     , <TItem <TSlice s.Out 0 2 3 1>> : e.V2
     
+    , <DecodeSigned32 e.V0> : e.D0
+    , <DecodeSigned32 e.V1> : e.D1
+    , <DecodeSigned32 e.V2> : e.D2
+    
     , <CombineResults
-        <AssertTrue 'silu -10' <CheckInRange (e.V0) (<Sub 0 10>) (10)>>
-        <AssertTrue 'silu 0'   <CheckInRange (e.V1) (<Sub 0 10>) (10)>>
-        <AssertTrue 'silu 10'  <CheckInRange (e.V2) (9990) (10010)>>
+        <AssertTrue 'silu -10' <CheckInRange (e.D0) (<Sub 0 10>) (10)>>
+        <AssertTrue 'silu 0'   <CheckInRange (e.D1) (<Sub 0 10>) (10)>>
+        <AssertTrue 'silu 10'  <CheckInRange (e.D2) (9990) (10010)>>
       > : t.Res
     
     = <TFree s.T> <TFree s.Out> t.Res;
@@ -58,7 +61,8 @@ DoTestSwiGLU {
     , <TSwiGLU s.Gate s.Val> : s.Out
     
     , <TItem s.Out> : e.Val
-    , <CheckInRange (e.Val) (19900) (20100)> : s.Ok
+    , <DecodeSigned32 e.Val> : e.DVal
+    , <CheckInRange (e.DVal) (19900) (20100)> : s.Ok
     
     , <CombineResults
         <AssertTrue 'swiglu value ok' s.Ok>
@@ -103,20 +107,18 @@ $ENTRY TestTopK {
 DoTestTopK {
   e.In
     , <TFromList (5) (10 1 8 2 5)> : s.Logits
+    , <TTopKMask s.Logits 2 1000> : s.Masked
     
-    /* FIX: Pass 3rd arg -1000 (representing -1000.0) as filter value 
-       This ensures masked values are exactly -1,000,000 (scaled)
-       Avoiding undefined behavior of -inf cast to int */
-    , <TTopKMask s.Logits 2 <Sub 0 1000>> : s.Masked
+    , <TItem <TSlice s.Masked 0 0 1 1>> : e.V0 /* 10000 */
+    , <TItem <TSlice s.Masked 0 2 3 1>> : e.V2 /* 8000 */
+    , <TItem <TSlice s.Masked 0 1 2 1>> : e.V1 /* Masked (-1000000) */
     
-    , <TItem <TSlice s.Masked 0 0 1 1>> : e.Val0 /* 10 -> 10000 */
-    , <TItem <TSlice s.Masked 0 2 3 1>> : e.Val2 /* 8 -> 8000 */
-    , <TItem <TSlice s.Masked 0 1 2 1>> : e.Val1 /* Masked -> -1000000 */
+    , <DecodeSigned32 e.V1> : e.DecodedV1
     
     , <CombineResults
-        <AssertEq 'topk preserved 1' e.Val0 10000>
-        <AssertEq 'topk preserved 2' e.Val2 8000>
-        <AssertEq 'topk masked' e.Val1 <Sub 0 1000000>>
+        <AssertEq 'topk preserved 1' e.V0 10000>
+        <AssertEq 'topk preserved 2' e.V2 8000>
+        <AssertTrue 'topk masked' <CheckEq (e.DecodedV1) (<Sub 0 1000000>)>>
       > : t.Res
       
     = <TFree s.Logits> <TFree s.Masked> t.Res;
@@ -128,19 +130,16 @@ $ENTRY TestTopP {
 DoTestTopP {
   e.In
     , <TFromList (4) (10 0 0 0)> : s.Logits
-    /* Logic: P=0.5. Top is 10. CumProb=1.0 > 0.5. Keep 10. Mask others. */
-    /* Note: TopP impl doesn't take 3rd arg usually, it hardcodes -inf.
-       If so, we can't fix UB easily. Let's assume TTopPMask works or we verify "very negative".
-       Wait, our TTopPMask implementation hardcoded -INFINITY! 
-       So we MUST use IsVeryNegative check, assuming it returns INT64_MIN. */
-    , <TTopPMask s.Logits 500> : s.Masked
+    , <TTopPMask s.Logits 500 1000> : s.Masked
     
-    , <TItem <TSlice s.Masked 0 0 1 1>> : e.Val0
-    , <TItem <TSlice s.Masked 0 1 2 1>> : e.Val1
+    , <TItem <TSlice s.Masked 0 0 1 1>> : e.V0
+    , <TItem <TSlice s.Masked 0 1 2 1>> : e.V1
+    
+    , <DecodeSigned32 e.V1> : e.DecodedV1
     
     , <CombineResults
-        <AssertEq 'topp keep' e.Val0 10000>
-        <AssertTrue 'topp mask' <IsVeryNegative e.Val1>>
+        <AssertEq 'topp keep' e.V0 10000>
+        <AssertTrue 'topp mask' <CheckEq (e.DecodedV1) (<Sub 0 1000000>)>>
       > : t.Res
       
     = <TFree s.Logits> <TFree s.Masked> t.Res;
@@ -161,7 +160,6 @@ DoTestRoPE {
     , <TSlice s.Freqs 0 0 2 1> : s.FreqsSliced
     , <TRoPE s.Q s.FreqsSliced> : s.Rotated
     
-    /* FIX: Compare shape lists explicitly, NOT using AssertTensorEq */
     , <TShape s.Q> : e.ShapeQ
     , <TShape s.Rotated> : e.ShapeRot
     
@@ -174,12 +172,38 @@ DoTestRoPE {
 
 
 *==============================================================================
-* ROBUST COMPARISON LOGIC
+* ROBUST LOGIC
 *==============================================================================
+
+/* Helper to generate 2^32 without literal overflow */
+GetWrapAroundConst {
+  = <Mul 65536 65536>;
+}
+
+DecodeSigned32 {
+  /* 2147483647 is max signed 32-bit int */
+  s.N, <Compare s.N 2147483647> : {
+    '+' = <Sub s.N <GetWrapAroundConst>>;
+    s.Other = s.N;
+  };
+  '-' s.N = '-' s.N; 
+  (e.Expr) = <DecodeSigned32 e.Expr>;
+}
 
 CheckShapes {
   (e.S) (e.S) = 1;
   (e.A) (e.B) = 0;
+}
+
+CheckEq {
+  (e.A) (e.B), <CompareExpr (e.A) (e.B)> : {
+      '0' = 1;
+      s.Other = 0;
+  };
+}
+
+CompareExpr {
+  (e.A) (e.B) = <CompNormalized <Normalize e.A> <Normalize e.B>>;
 }
 
 Normalize {
@@ -201,10 +225,6 @@ CompNormalized {
   ('-') s.A ('-') s.B, <Compare s.A s.B> : { '+' = '-'; '-' = '+'; '0' = '0'; };
 }
 
-CompareExpr {
-  (e.A) (e.B) = <CompNormalized <Normalize e.A> <Normalize e.B>>;
-}
-
 CheckInRange {
   (e.Val) (e.Min) (e.Max), <CompareExpr (e.Val) (e.Min)> : {
       '-' = 0; 
@@ -213,13 +233,4 @@ CheckInRange {
           s.OK = 1;
       };
   };
-}
-
-IsVeryNegative {
-  e.Val = <IsVeryNegative_Aux <CompareExpr (e.Val) (<Sub 0 100000>)>>;
-}
-
-IsVeryNegative_Aux {
-  '-' = 1;
-  s.Other = 0;
 }

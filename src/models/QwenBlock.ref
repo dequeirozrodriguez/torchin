@@ -1,0 +1,31 @@
+* src/models/QwenBlock.ref
+
+$EXTERN TRMSNorm, QwenAttention, QwenMLP, TAdd, TFree;
+$EXTERN ConfigGet;
+
+$ENTRY QwenBlock {
+  * Inputs:
+  * X, AttnWeights, QKNorms, MLPWeights, LayerNorms...
+  s.X (s.WQ s.WK s.WV s.WO) (s.QNorm s.KNorm) (s.WG s.WU s.WD) (s.N1 s.N2)
+  s.Freqs s.Mask (e.Cfg) s.Pos (s.KC s.VC)
+    
+    = <ConfigGet (e.Cfg) 'rms_norm_eps'> : s.Eps
+    
+    * Attention Block (Pre-Norm)
+    = <TRMSNorm s.X s.N1 s.Eps> : s.X_Norm1
+    
+    * Q/K Norm weights to Attention
+    = <QwenAttention s.X_Norm1 (s.WQ s.WK s.WV s.WO) (s.QNorm s.KNorm)
+         s.Freqs s.Mask (e.Cfg) s.Pos (s.KC s.VC)> : s.H_Attn (s.KC_New s.VC_New)
+         
+    = <TAdd s.X s.H_Attn> : s.H1
+    = <TFree s.X_Norm1> <TFree s.H_Attn>
+    
+    * MLP Block (Pre-Norm)
+    = <TRMSNorm s.H1 s.N2 s.Eps> : s.X_Norm2
+    = <QwenMLP s.X_Norm2 s.WG s.WU s.WD> : s.H_MLP
+    = <TAdd s.H1 s.H_MLP> : s.Out
+    = <TFree s.X_Norm2> <TFree s.H_MLP> <TFree s.H1>
+    
+    = s.Out (s.KC_New s.VC_New);
+}

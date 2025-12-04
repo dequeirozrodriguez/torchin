@@ -1,0 +1,58 @@
+* src/models/QwenGenerate.ref
+
+$EXTERN QwenModelForward, TArgmax, TAdd, TSlice, TGetDim, TFree;
+$EXTERN TPrecomputeFreqs, TCausalMask, TZeros;
+$EXTERN ConfigGet;
+
+$ENTRY QwenGenerate {
+  s.Weights (e.Cfg) s.PromptTokens s.MaxNew
+    * Init
+    = <ConfigGet (e.Cfg) 'max_position_embeddings'> : s.MaxSeq
+    = <ConfigGet (e.Cfg) 'head_dim'> : s.HeadDim
+    = <ConfigGet (e.Cfg) 'rope_theta'> : s.Theta
+    
+    * Precompute Static Tensors
+    = <TPrecomputeFreqs s.HeadDim s.MaxSeq s.Theta> : s.Freqs
+    = <TCausalMask s.MaxSeq> : s.Mask
+    
+    * Init KV Caches (List of (K V) tuples)
+    = <InitKVCaches (e.Cfg) <ConfigGet (e.Cfg) 'num_hidden_layers'>> : e.KVCaches
+    
+    * Generation Loop
+    = <GenerateLoop s.PromptTokens s.Weights e.KVCaches (e.Cfg) s.Freqs s.Mask 0 s.MaxNew> 
+      : e.OutputTokens
+      
+    = e.OutputTokens;
+}
+
+GenerateLoop {
+  * Stop Condition: EOS Token 151645
+  151645 s.W e.KV (e.Cfg) s.F s.M s.Pos s.Left = ; 
+  
+  * Normal Stop: Max Length reached
+  s.Tok s.W e.KV (e.Cfg) s.F s.M s.Pos 0 = ;
+  
+  s.CurrentTok s.W e.KV (e.Cfg) s.F s.M s.Pos s.Left
+    * Forward Pass
+    = <QwenModelForward s.CurrentTok s.W (e.KV) (e.Cfg) s.F s.M s.Pos> 
+      : s.Logits (e.NewKV)
+    
+    * Greedy Sample
+    = <TSlice s.Logits 1 0 1 1> : s.LastLogit
+    = <TArgmax s.LastLogit> : s.NextTok
+    
+    * Recurse
+    = <Prout 'Gen: ' s.NextTok>
+    = s.NextTok <GenerateLoop s.NextTok s.W e.NewKV (e.Cfg) s.F s.M <Add s.Pos 1> <Sub s.Left 1>>;
+}
+
+InitKVCaches {
+  (e.Cfg) 0 = ;
+  (e.Cfg) s.N
+    = <ConfigGet (e.Cfg) 'max_position_embeddings'> : s.S
+    = <ConfigGet (e.Cfg) 'num_key_value_heads'> : s.H
+    = <ConfigGet (e.Cfg) 'head_dim'> : s.D
+    * Cache is [1, S, H, D]
+    = (<TZeros 1 s.S s.H s.D> <TZeros 1 s.S s.H s.D>)
+      <InitKVCaches (e.Cfg) <Sub s.N 1>>;
+}

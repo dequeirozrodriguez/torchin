@@ -1,0 +1,42 @@
+* src/models/QwenModel.ref
+
+$EXTERN QwenBlock, TEmbedding, TRMSNorm, TLinearNoBias, TFree;
+$EXTERN ConfigGet;
+
+* <QwenModelForward s.Tokens (t.Weights) (e.KVCaches) (e.Cfg) s.Freqs s.Mask s.Pos>
+* Returns: s.Logits (e.NewKVCaches)
+$ENTRY QwenModelForward {
+  s.Tokens (t.Layers) (s.Emb s.FinalNorm s.Head) (e.KVCaches) (e.Cfg) s.Freqs s.Mask s.Pos
+    * Embedding
+    = <TEmbedding s.Tokens s.Emb> : s.H
+    
+    * Layers Loop
+    = <ForwardLayers s.H t.Layers (e.KVCaches) (e.Cfg) s.Freqs s.Mask s.Pos> 
+      : s.H_Final (e.NewKVCaches)
+    
+    * Final Norm
+    = <ConfigGet (e.Cfg) 'rms_norm_eps'> : s.Eps
+    = <TRMSNorm s.H_Final s.FinalNorm s.Eps> : s.H_Norm
+    
+    * LM Head
+    = <TLinearNoBias s.H_Norm s.Head> : s.Logits
+    = <TFree s.H_Final> <TFree s.H_Norm>
+    
+    = s.Logits (e.NewKVCaches);
+}
+
+ForwardLayers {
+  s.H (/*Empty*/) () (e.Cfg) s.F s.M s.P = s.H ();
+  
+  s.H (t.BlockW e.RestW) (t.KV e.RestKV) (e.Cfg) s.F s.M s.P
+    * Structure: ((Norm1 Norm2) (Attn) (QKNorms) (MLP))
+    = t.BlockW : ((s.N1 s.N2) t.Attn t.QKNorm t.MLP)
+    
+    = <QwenBlock s.H t.Attn t.QKNorm t.MLP (s.N1 s.N2) s.F s.M (e.Cfg) s.P t.KV> 
+      : s.H_New t.KV_New
+      
+    = <ForwardLayers s.H_New (e.RestW) (e.RestKV) (e.Cfg) s.F s.M s.P> 
+      : s.H_Final (e.FinalKVs)
+      
+    = s.H_Final (t.KV_New e.FinalKVs);
+}

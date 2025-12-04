@@ -1,0 +1,6 @@
+# Python dependencies for RefTorch-Qwen3 tools (we really need to get ride of it asap)
+torch>=2.0.0
+transformers>=4.40.0
+tqdm>=4.65.0
+numpy>=1.24.0
+

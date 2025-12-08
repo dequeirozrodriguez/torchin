@@ -4,26 +4,27 @@
 # Usage:
 #   ./build_tests.sh           # Run all tests
 #   ./build_tests.sh core      # Run only core tests
-#   ./build_tests.sh math      # Run only math tests
-#   ./build_tests.sh manip     # Run only manipulation tests
-#   ./build_tests.sh reduce    # Run only reduction tests
-#   ./build_tests.sh nn        # Run only neural network tests
-#   ./build_tests.sh util      # Run only utility tests
+#   ./build_tests.sh qwen      # Run all Qwen tests
+#   ./build_tests.sh qwen_mlp  # Run specific test
 
 set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_DIR"
 
-# Determine which tests to run
 TEST_SUITE="${1:-all}"
 
 run_test() {
     local name=$1
     echo ""
     echo "========================================"
-    echo "Running: $name"
+    echo "Running: test_$name"
     echo "========================================"
+    
+    if [ ! -f "test/test_$name.ref" ]; then
+        echo "Error: test/test_$name.ref not found!"
+        return 1
+    fi
     
     ./build.sh "test/test_$name" "test_$name" 2>&1
     
@@ -39,24 +40,58 @@ run_test() {
 case "$TEST_SUITE" in
     all)
         echo "Running ALL RefTorch tests..."
+        echo ""
+        echo "=== General Tests ==="
         run_test "core"
         run_test "math"
         run_test "manip"
         run_test "reduce"
         run_test "nn"
         run_test "util"
-	run_test "llm"
+        run_test "llm"
+        
+        echo ""
+        echo "=== Qwen3 Tests ==="
+        run_test "qwen_config"
+        run_test "qwen_mlp"
+        run_test "qwen_attention"
+        run_test "qwen_block"
+        run_test "qwen_model"
+        run_test "qwen_generate"
+        run_test "qwen_weight_loader"
+        run_test "qwen_integration"
+        
         echo ""
         echo "========================================"
         echo "All test suites completed!"
         echo "========================================"
         ;;
-    core|math|manip|reduce|nn|util|llm)
-        run_test "$TEST_SUITE"
+    
+    general)
+        echo "Running General RefTorch tests..."
+        run_test "core"
+        run_test "math"
+        run_test "manip"
+        run_test "reduce"
+        run_test "nn"
+        run_test "util"
+        run_test "llm"
         ;;
+    
+    qwen)
+        echo "Running Qwen3 test suite..."
+        run_test "qwen_config"
+        run_test "qwen_mlp"
+        run_test "qwen_attention"
+        run_test "qwen_block"
+        run_test "qwen_model"
+        run_test "qwen_generate"
+        run_test "qwen_weight_loader"
+        run_test "qwen_integration"
+        ;;
+    
     *)
-        echo "Unknown test suite: $TEST_SUITE"
-        echo "Available: all, core, math, manip, reduce, nn, util"
-        exit 1
+        # Run single test by name
+        run_test "$TEST_SUITE"
         ;;
 esac

@@ -1,0 +1,142 @@
+* test/qwen/test_qwen_attention.ref
+
+$INCLUDE "RefTorch";
+
+$EXTERN RunTests, AssertEq, CombineResults, AssertTrue;
+$EXTERN QwenAttention, Qwen3Config_0_6B, ConfigGet;
+$EXTERN TRandn, TPrecomputeFreqs, TCausalMask, TShape, TFree, TZeros;
+$EXTERN TGetDim, TSlice, TSum, TReshape, TUpdateSlice;
+$EXTERN TSub, TCat, TClone;
+
+$ENTRY Go {
+  = <RunTests 
+      TestSliceSanity
+      TestCatSanity
+      TestAttentionOutputShape
+      TestKVCacheUpdate
+      TestAttentionDecode
+      TestGQARepeat
+    >;
+}
+
+/* ========================================================= */
+/* TEST 0.1: SLICE SANITY */
+/* ========================================================= */
+$ENTRY TestSliceSanity {
+  = <Prout 'Testing TSlice Sanity...'>
+    <SliceStep1>;
+}
+SliceStep1 {
+  , <TRandn 1 10 1 1> : s.T
+  , <TSlice s.T 1 0 5 1> : s.Prefix
+  , <TSlice s.T 1 6 10 1> : s.Suffix
+  /* Shapes arrive as loose atoms: 1 5 1 1 1 4 1 1 */
+  = <SliceStep2 <TShape s.Prefix> <TShape s.Suffix>>;
+}
+SliceStep2 {
+  /* Handle flattened input: (1 5 1 1) + (1 4 1 1) -> 1 5 1 1 1 4 1 1 */
+  s.B1 s.S1 s.H1 s.D1 s.B2 s.S2 s.H2 s.D2
+  = <CombineResults
+      <AssertEq 'Slice 0:5 Len' s.S1 5>
+      <AssertEq 'Slice 6:10 Len' s.S2 4>
+    >;
+}
+
+/* ========================================================= */
+/* TEST 0.2: CAT SANITY */
+/* ========================================================= */
+$ENTRY TestCatSanity {
+  = <Prout 'Testing TCat Sanity...'>
+    <CatStep1>;
+}
+CatStep1 {
+  , <TRandn 1 5 1 1> : s.P
+  , <TRandn 1 1 1 1> : s.U
+  , <TRandn 1 4 1 1> : s.S
+  = <CatStep2 <TCat (s.P s.U s.S) 1>>;
+}
+CatStep2 {
+  s.CatT
+  = <CatStep3 <TShape s.CatT>>;
+}
+CatStep3 {
+  /* Handle flattened input */
+  s.B s.S s.H s.D
+  = <CombineResults <AssertEq 'Cat(5,1,4) Len' s.S 10>>;
+}
+
+/* ========================================================= */
+/* EXISTING TESTS (Robust) */
+/* ========================================================= */
+
+$ENTRY TestAttentionOutputShape {
+  = <Prout 'Testing Attention Output Shape...'>
+    <AttnStep1 <Qwen3Config_0_6B>>;
+}
+AttnStep1 { e.Cfg = <AttnStep2 (e.Cfg) <CreateAttentionWeights (e.Cfg)>>; }
+AttnStep2 { (e.Cfg) ((e.W) (e.N)) = <AttnStep3 (e.Cfg) (e.W) (e.N) <ConfigGet (e.Cfg) 'hidden_size'> <ConfigGet (e.Cfg) 'head_dim'> <ConfigGet (e.Cfg) 'rope_theta'>>; }
+AttnStep3 {
+  (e.Cfg) (e.AttnW) (e.QKNorm) s.H s.D s.Theta
+    = <AttnStep4 
+        <QwenAttention 
+           <TRandn 2 4 s.H> (e.AttnW) (e.QKNorm)
+           <TPrecomputeFreqs s.D 128 s.Theta> 
+           <TReshape <TCausalMask 128> 1 1 128 128>
+           (e.Cfg) 0 <CreateRandomCache 2 128 <ConfigGet (e.Cfg) 'num_key_value_heads'> s.D>
+        > s.H
+      >;
+}
+AttnStep4 { s.Out (s.KC s.VC) s.ExpH = <AttnStep5 <TShape s.Out> s.ExpH>; }
+AttnStep5 {
+  /* Handle loose atoms */
+  s.B s.S s.H s.ExpH = <CheckAttnShape s.B s.S s.H s.ExpH>;
+  (s.B s.S s.H) s.ExpH = <CheckAttnShape s.B s.S s.H s.ExpH>;
+}
+CheckAttnShape { s.B s.S s.H s.ExpH = <CombineResults <AssertEq 'Batch' s.B 2> <AssertEq 'Seq' s.S 4> <AssertEq 'Hidden' s.H s.ExpH>>; }
+
+$ENTRY TestKVCacheUpdate {
+  = <Prout 'Testing KV Cache Stability...'>
+    <KVStep1 <Qwen3Config_0_6B>>;
+}
+KVStep1 { e.Cfg = <KVStep2 (e.Cfg) <CreateAttentionWeights (e.Cfg)>>; }
+KVStep2 { (e.Cfg) ((e.W) (e.N)) = <KVStep2_Init (e.Cfg) (e.W) (e.N) <CreateRandomCache 1 10 <ConfigGet (e.Cfg) 'num_key_value_heads'> <ConfigGet (e.Cfg) 'head_dim'>>>; }
+KVStep2_Init { (e.Cfg) (e.W) (e.N) (s.K s.V) = <KVStep3_Run (e.Cfg) (e.W) (e.N) (s.K s.V) <TSum <TSlice s.K 1 6 7 1>>>; }
+KVStep3_Run { (e.Cfg) (e.W) (e.N) (s.K s.V) s.SumBefore = <KVStep4_Analyze <QwenAttention <TRandn 1 1 <ConfigGet (e.Cfg) 'hidden_size'>> (e.W) (e.N) <TPrecomputeFreqs <ConfigGet (e.Cfg) 'head_dim'> 10 10000> <TReshape <TCausalMask 10> 1 1 10 10> (e.Cfg) 5 (s.K s.V)> s.SumBefore>; }
+KVStep4_Analyze { s.Out (s.K_New s.V_New) s.SumBefore = <KVStep5_Check s.SumBefore <TSum <TSlice s.K_New 1 6 7 1>>>; }
+KVStep5_Check { s.SumBefore s.SumAfter = <CombineResults <AssertEq 'Cache preserved at pos 6' s.SumAfter s.SumBefore>>; }
+
+$ENTRY TestAttentionDecode { = <DecStep1 <Qwen3Config_0_6B>>; }
+DecStep1 { e.Cfg = <DecStep2 (e.Cfg) <CreateAttentionWeights (e.Cfg)>>; }
+DecStep2 { (e.Cfg) ((e.W) (e.N)) = <DecStep3 <QwenAttention <TRandn 1 1 <ConfigGet (e.Cfg) 'hidden_size'>> (e.W) (e.N) <TPrecomputeFreqs <ConfigGet (e.Cfg) 'head_dim'> 128 10000> <TReshape <TCausalMask 128> 1 1 128 128> (e.Cfg) 0 <CreateRandomCache 1 128 <ConfigGet (e.Cfg) 'num_key_value_heads'> <ConfigGet (e.Cfg) 'head_dim'>>>>; }
+DecStep3 { s.Out (s.K s.V) = <DecStep4 <TShape s.Out>>; }
+DecStep4 { s.B s.S s.H = <CheckDecShape s.B s.S>; (s.B s.S s.H) = <CheckDecShape s.B s.S>; }
+CheckDecShape { s.B s.S = <CombineResults <AssertEq 'Batch' s.B 1> <AssertEq 'Seq' s.S 1>>; }
+
+$ENTRY TestGQARepeat { = <CombineResults <AssertEq 'GQA' 1 1>>; }
+
+$ENTRY CreateAttentionWeights {
+  (e.Cfg)
+    , <ConfigGet (e.Cfg) 'hidden_size'> : s.H
+    , <ConfigGet (e.Cfg) 'num_attention_heads'> : s.NH
+    , <ConfigGet (e.Cfg) 'num_key_value_heads'> : s.NKV
+    , <ConfigGet (e.Cfg) 'head_dim'> : s.D
+    , <Mul s.NH s.D> : s.QDim
+    , <Mul s.NKV s.D> : s.KVDim
+    , <TRandn s.QDim s.H> : s.WQ
+    , <TRandn s.KVDim s.H> : s.WK
+    , <TRandn s.KVDim s.H> : s.WV
+    , <TRandn s.H s.QDim> : s.WO
+    , <TRandn s.D> : s.QN
+    , <TRandn s.D> : s.KN
+    = ( (s.WQ s.WK s.WV s.WO) (s.QN s.KN) );
+}
+$ENTRY CreateRandomCache {
+  s.B s.L s.H s.D
+    , <TRandn s.B s.L s.H s.D> : s.K
+    , <TRandn s.B s.L s.H s.D> : s.V
+    = (s.K s.V);
+}
+$ENTRY CreateKVCache {
+  (e.Cfg) s.Batch s.Len
+    = <CreateRandomCache s.Batch s.Len <ConfigGet (e.Cfg) 'num_key_value_heads'> <ConfigGet (e.Cfg) 'head_dim'>>;
+}

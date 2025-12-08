@@ -6,17 +6,17 @@ $EXTERN TLinearNoBias, TSwiGLU, TTranspose, TMatMul, TFree;
 * <QwenMLP s.Hidden s.WGate s.WUp s.WDown> == s.Output
 $ENTRY QwenMLP {
   s.Hidden s.WGate s.WUp s.WDown
-    * Linear Projections
+    /* Linear Projections */
     = <TLinearNoBias s.Hidden s.WGate> : s.GateOut
-    = <TLinearNoBias s.Hidden s.WUp> : s.UpOut
+    , <TLinearNoBias s.Hidden s.WUp> : s.UpOut
     
-    * SwiGLU Activation (SiLU(Gate) * Up)
-    = <TSwiGLU s.GateOut s.UpOut> : s.Act
-    = <TFree s.GateOut> <TFree s.UpOut>
+    /* SwiGLU Activation (SiLU(Gate) * Up) */
+    , <TSwiGLU s.GateOut s.UpOut> : s.Act
+    , <TFree s.GateOut> <TFree s.UpOut> : e.Ignore
     
-    * Down Projection
-    = <TLinearNoBias s.Act s.WDown> : s.Output
-    = <TFree s.Act>
+    /* Down Projection */
+    , <TLinearNoBias s.Act s.WDown> : s.Output
+    , <TFree s.Act> : e.Ignore2
     
     = s.Output;
 }
@@ -25,7 +25,7 @@ $ENTRY QwenMLP {
 TLinearNoBias {
   s.Input s.Weight
     = <TTranspose s.Weight 0 1> : s.WeightT
-    = <TMatMul s.Input s.WeightT> : s.Output
-    = <TFree s.WeightT>
+    , <TMatMul s.Input s.WeightT> : s.Output
+    , <TFree s.WeightT> : e.Ignore
     = s.Output;
 }

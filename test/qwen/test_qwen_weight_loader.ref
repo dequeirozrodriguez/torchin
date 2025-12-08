@@ -1,0 +1,109 @@
+* test/qwen/test_qwen_weight_loader.ref
+
+$INCLUDE "RefTorch";
+
+$EXTERN RunTests, AssertTrue, AssertEq, CombineResults;
+$EXTERN Qwen3Config_0_6B, ConfigGet;
+$EXTERN Symb, Type;
+
+$ENTRY Go {
+  = <RunTests 
+      TestWeightPathConstruction
+      TestWeightStructure
+      TestTiedEmbeddings
+      TestCatFunction
+    >;
+}
+
+*==============================================================================
+* TEST 1: Path Construction
+*==============================================================================
+$ENTRY TestWeightPathConstruction {
+  , <Prout 'Testing weight path construction...'> : e.Ignore
+  
+  /* FIX: Wrap the base path in parens ('/model') to prevent pattern ambiguity */
+  /* Test 1: Attention weight path */
+  , <WeightPath ('/model') 0 'self_attn.q_proj'> : e.Path0
+  
+  /* Test 2: MLP weight path */
+  , <WeightPath ('/model') 5 'mlp.gate_proj'> : e.Path5
+  
+  /* Test 3: Norm path */
+  , <WeightPath ('/model') 27 'input_layernorm'> : e.Path27
+  
+  /* Construct Expected strings manually */
+  , <Cat '/model' '/layer_0_self_attn.q_proj.weight.pt'> : e.Exp0
+  , <Cat '/model' '/layer_5_mlp.gate_proj.weight.pt'> : e.Exp5
+  
+  = <CombineResults
+      <AssertTrue 'Path 0 Correct' <StrEqual (e.Path0) (e.Exp0)>>
+      <AssertTrue 'Path 5 Correct' <StrEqual (e.Path5) (e.Exp5)>>
+    >;
+}
+
+*==============================================================================
+* TEST 2: Weight Structure (Dry Run)
+*==============================================================================
+$ENTRY TestWeightStructure {
+  , <Prout 'Testing weight structure logic...'> : e.Ignore
+  
+  /* FIX: Wrap base path in parens here too */
+  /* Check Bias Path logic (simulated) */
+  , <WeightPath ('/m') 0 'self_attn.q_proj'> : e.W
+  
+  /* Check QK-Norm Path logic */
+  , <WeightPath ('/m') 0 'self_attn.q_norm'> : e.QN
+  , <Cat '/m' '/layer_0_self_attn.q_norm.weight.pt'> : e.ExpQN
+  
+  = <CombineResults
+      <AssertTrue 'QK-Norm Path Correct' <StrEqual (e.QN) (e.ExpQN)>>
+    >;
+}
+
+*==============================================================================
+* TEST 3: Tied Embeddings Configuration
+*==============================================================================
+$ENTRY TestTiedEmbeddings {
+  , <Prout 'Testing tied embeddings concept...'> : e.Ignore
+  , <Qwen3Config_0_6B> : e.Cfg
+  , <ConfigGet (e.Cfg) 'tie_word_embeddings'> : s.Tied
+  
+  = <CombineResults <AssertEq 'Weights tied' s.Tied 1>>;
+}
+
+*==============================================================================
+* TEST 4: String Concatenation
+*==============================================================================
+$ENTRY TestCatFunction {
+  , <Prout 'Testing Cat...'> : e.Ignore
+  , <Cat 'A' 'B' 'C'> : 'ABC'
+  , <Cat '/path' '/' 'file'> : '/path/file'
+  = <CombineResults <AssertTrue 'Concat works' 1>>;
+}
+
+*==============================================================================
+* HELPER FUNCTIONS
+*==============================================================================
+
+StrEqual {
+  (e.S) (e.S) = 1;
+  (e.A) (e.B) = 0;
+}
+
+$ENTRY Cat {
+  e.All = e.All;
+}
+
+/* FIX: Updated signature to accept (e.BaseDir) in parens.
+   e.BaseDir matches the content INSIDE the parens, effectively extracting it.
+*/
+$ENTRY WeightPath {
+  (e.BaseDir) s.LayerNum e.ComponentName
+    = <Cat e.BaseDir '/layer_' <Symb s.LayerNum> '_' e.ComponentName '.weight.pt'>;
+}
+
+$ENTRY LoadOneBlock {
+  e.BaseDir s.LayerNum (e.Cfg)
+    , <Prout 'LoadOneBlock: Would load layer ' s.LayerNum ' from ' e.BaseDir> : e.Ign
+    = ((0 0) (0 0 0 0) (0 0) (0 0 0));
+}

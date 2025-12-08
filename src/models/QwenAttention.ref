@@ -1,103 +1,168 @@
 * src/models/QwenAttention.ref
-* Qwen3 Attention: GQA + RoPE + QK-Norm (No Bias)
+* Qwen3 Attention: GQA + RoPE + QK-Norm (NO BIAS)
 
-$EXTERN TLinearNoBias, TRMSNorm, TRoPE, TUpdateSlice;
-$EXTERN TMatMul, TTranspose, TAdd, TDivScalar, TSoftmax, TMul;
+$INCLUDE "RefTorch";
+
+$EXTERN TRMSNorm, TRoPE, TUpdateSlice;
+$EXTERN TMatMul, TTranspose, TAdd, TDivScalar, TSoftmax, TMul, TSub;
 $EXTERN TReshape, TRepeat, TShape, TGetDim, TPermute;
 $EXTERN TFree, TClone, TSlice, TCat;
 $EXTERN ConfigGet; 
 
-* Signature:
-* <QwenAttention s.X (s.WQ s.WK s.WV s.WO) (s.QNorm s.KNorm) ...>
-
 $ENTRY QwenAttention {
+  /* INPUT: Weights only (No Biases) */
   s.X (s.WQ s.WK s.WV s.WO) (s.QNorm s.KNorm)
   s.Freqs s.Mask (e.Cfg) s.Pos (s.KC s.VC)
     
-    * Get Dims
+    /* 1. Get Dims */
     = <ConfigGet (e.Cfg) 'num_attention_heads'> : s.Heads
-    = <ConfigGet (e.Cfg) 'num_key_value_heads'> : s.KVHeads
-    = <ConfigGet (e.Cfg) 'head_dim'> : s.HeadDim
-    = <TGetDim s.X 0> : s.Batch
-    = <TGetDim s.X 1> : s.SeqLen
-    = <ConfigGet (e.Cfg) 'rms_norm_eps'> : s.Eps
+    , <ConfigGet (e.Cfg) 'num_key_value_heads'> : s.KVHeads
+    , <ConfigGet (e.Cfg) 'head_dim'> : s.HeadDim
+    , <TGetDim s.X 0> : s.Batch
+    , <TGetDim s.X 1> : s.SeqLen
+    , <ConfigGet (e.Cfg) 'rms_norm_eps'> : s.Eps
     
-    * Projections (NO BIAS verified)
-    = <TLinearNoBias s.X s.WQ> : s.Q0
-    = <TLinearNoBias s.X s.WK> : s.K0
-    = <TLinearNoBias s.X s.WV> : s.V0
+    /* 2. Projections (NO BIAS) */
+    , <TLinearNoBias s.X s.WQ> : s.Q0
+    , <TLinearNoBias s.X s.WK> : s.K0
+    , <TLinearNoBias s.X s.WV> : s.V0
     
-    * Reshape [B, S, H, D]
-    = <TReshape s.Q0 s.Batch s.SeqLen s.Heads s.HeadDim> : s.Q_Raw
-    = <TReshape s.K0 s.Batch s.SeqLen s.KVHeads s.HeadDim> : s.K_Raw
-    = <TReshape s.V0 s.Batch s.SeqLen s.KVHeads s.HeadDim> : s.V
-    = <TFree s.Q0> <TFree s.K0> <TFree s.V0>
+    /* 3. Reshape */
+    , <TReshape s.Q0 s.Batch s.SeqLen s.Heads s.HeadDim> : s.Q_Raw
+    , <TReshape s.K0 s.Batch s.SeqLen s.KVHeads s.HeadDim> : s.K_Raw
+    , <TReshape s.V0 s.Batch s.SeqLen s.KVHeads s.HeadDim> : s.V
+    , <TFree s.Q0> <TFree s.K0> <TFree s.V0> : e.F1
     
-    * QK-NORM
-    * Apply RMSNorm to Q and K before RoPE
-    = <TRMSNorm s.Q_Raw s.QNorm s.Eps> : s.Q_Normed
-    = <TRMSNorm s.K_Raw s.KNorm s.Eps> : s.K_Normed
-    = <TFree s.Q_Raw> <TFree s.K_Raw>
+    /* 4. QK-NORM */
+    , <TRMSNorm s.Q_Raw s.QNorm s.Eps> : s.Q_Normed
+    , <TRMSNorm s.K_Raw s.KNorm s.Eps> : s.K_Normed
+    , <TFree s.Q_Raw> <TFree s.K_Raw> : e.F2
     
-    * RoPE (Using Normed Q/K)
-    = <TSlice s.Freqs 0 s.Pos <Add s.Pos s.SeqLen> 1> : s.FreqsSliced
-    = <TRoPE s.Q_Normed s.FreqsSliced> : s.Q_Rot
-    = <TRoPE s.K_Normed s.FreqsSliced> : s.K_Rot
-    = <TFree s.Q_Normed> <TFree s.K_Normed> <TFree s.FreqsSliced>
+    /* 5. RoPE */
+    , <TSlice s.Freqs 0 s.Pos <Add s.Pos s.SeqLen> 1> : s.FreqsSliced
+    , <TRoPE s.Q_Normed s.FreqsSliced> : s.Q_Rot
+    , <TRoPE s.K_Normed s.FreqsSliced> : s.K_Rot
+    , <TFree s.Q_Normed> <TFree s.K_Normed> <TFree s.FreqsSliced> : e.F3
     
-    * KV Cache Update
-    = <TUpdateSlice s.KC s.K_Rot 1 s.Pos> : s.KC_Updated
-    = <TUpdateSlice s.VC s.V 1 s.Pos> : s.VC_Updated
-    = <TFree s.K_Rot> <TFree s.V>
+    /* 6. KV Cache (FIX: Clone Update to break aliasing) */
+    , <TClone s.K_Rot> : s.K_Rot_Safe
+    , <TClone s.V> : s.V_Safe
+    , <ManualUpdateKVCache s.KC s.VC s.K_Rot_Safe s.V_Safe s.Pos> : (s.KC_Updated s.VC_Updated)
+    , <TFree s.K_Rot> <TFree s.K_Rot_Safe> <TFree s.V> <TFree s.V_Safe> : e.F4
     
-    * Get Full KV & GQA Repeat
-    = <Add s.Pos s.SeqLen> : s.TotalLen
-    = <TSlice s.KC_Updated 1 0 s.TotalLen 1> : s.K_Full
-    = <TSlice s.VC_Updated 1 0 s.TotalLen 1> : s.V_Full
-    = <PrepareGQA s.K_Full s.Heads s.KVHeads> : s.K_Ready
-    = <PrepareGQA s.V_Full s.Heads s.KVHeads> : s.V_Ready
+    /* 7. Get Full KV */
+    , <Add s.Pos s.SeqLen> : s.TotalLen
+    , <TSlice s.KC_Updated 1 0 s.TotalLen 1> : s.K_Full
+    , <TSlice s.VC_Updated 1 0 s.TotalLen 1> : s.V_Full
+    , <PrepareGQA s.K_Full s.Heads s.KVHeads> : s.K_Ready
+    , <PrepareGQA s.V_Full s.Heads s.KVHeads> : s.V_Ready
     
-    * Attention Mechanism
-    = <TPermute s.Q_Rot 0 2 1 3> : s.Q_T
-    = <TPermute s.K_Ready 0 2 3 1> : s.K_T
-    = <TMatMul s.Q_T s.K_T> : s.Scores
-    = <TDivScalar s.Scores <Sqrt s.HeadDim>> : s.ScaledScores
+    /* 8. Attention */
+    , <TPermute s.Q_Rot 0 2 1 3> : s.Q_T
+    , <TPermute s.K_Ready 0 2 3 1> : s.K_T
+    , <TMatMul s.Q_T s.K_T> : s.Scores
+    , <TDivScalar s.Scores <Sqrt s.HeadDim>> : s.ScaledScores
     
-    * Masking & Softmax
-    = <ApplyMask s.ScaledScores s.Mask> : s.MaskedScores
-    = <TSoftmax s.MaskedScores -1> : s.Probs
+    , <ApplyMask s.ScaledScores s.Mask s.Pos> : s.MaskedScores
+    , <TSoftmax s.MaskedScores 3> : s.Probs
     
-    * Output: Probs @ V
-    = <TPermute s.V_Ready 0 2 1 3> : s.V_T
-    = <TMatMul s.Probs s.V_T> : s.Context
+    /* Output */
+    , <TPermute s.V_Ready 0 2 1 3> : s.V_T
+    , <TMatMul s.Probs s.V_T> : s.Context
     
-    * 9. Output Projection (NO BIAS)
-    = <TPermute s.Context 0 2 1 3> : s.Context_Contig
-    = <TReshape s.Context_Contig s.Batch s.SeqLen <Mul s.Heads s.HeadDim>> : s.Context_Flat
-    = <TLinearNoBias s.Context_Flat s.WO> : s.Output
+    /* 9. Projection (NO BIAS) */
+    , <TPermute s.Context 0 2 1 3> : s.Context_Contig
+    , <TReshape s.Context_Contig s.Batch s.SeqLen <Mul s.Heads s.HeadDim>> : s.Context_Flat
+    , <TLinearNoBias s.Context_Flat s.WO> : s.Output
     
-    * Cleanup
-    = <TFreeAllExcept (s.Output s.KC_Updated s.VC_Updated)>
+    , <TFreeAllExcept (s.Output s.KC_Updated s.VC_Updated)> : e.F5
     
     = s.Output (s.KC_Updated s.VC_Updated);
 }
 
-* Helpers
+/* ========================================================================= */
+/* HELPERS */
+/* ========================================================================= */
+
+ManualUpdateKVCache {
+  s.KC s.VC s.K_Up s.V_Up s.Pos
+    = <ManualUpdateStep2 s.VC s.V_Up s.Pos <DoManualSlice s.KC s.K_Up 1 s.Pos>>;
+}
+
+ManualUpdateStep2 {
+  s.VC s.V_Up s.Pos s.KC_New
+    = (s.KC_New <DoManualSlice s.VC s.V_Up 1 s.Pos>);
+}
+
+DoManualSlice {
+  s.Cache s.Update s.Dim s.Pos
+    = <DoManualSlice_Shape s.Cache s.Update s.Dim s.Pos <TShape s.Update>>;
+}
+
+DoManualSlice_Shape {
+  s.Cache s.Update s.Dim s.Pos (s.B s.ULen s.H s.D) 
+    = <DoManualSlice_Logic s.Cache s.Update s.Dim s.Pos s.ULen>;
+  s.Cache s.Update s.Dim s.Pos s.B s.ULen s.H s.D
+    = <DoManualSlice_Logic s.Cache s.Update s.Dim s.Pos s.ULen>;
+}
+
+DoManualSlice_Logic {
+  s.Cache s.Update s.Dim s.Pos s.ULen
+    = <DoManualSlice_Exec s.Cache s.Update s.Dim s.Pos <Add s.Pos s.ULen>>;
+}
+
+DoManualSlice_Exec {
+  s.Cache s.Update s.Dim s.Pos s.EndPos
+    = <DoManualSlice_Final s.Cache s.Update s.Dim s.Pos s.EndPos <TGetDim s.Cache s.Dim>>;
+}
+
+/* FIX: TClone slices before TCat to force memory realization */
+DoManualSlice_Final {
+  /* Case 1: Start of Cache */
+  s.Cache s.Update s.Dim 0 s.EndPos s.Total
+    , <TSlice s.Cache s.Dim s.EndPos s.Total 1> : s.Suffix
+    , <TClone s.Suffix> : s.SuffixSafe
+    = <TCat (s.Update s.SuffixSafe) s.Dim>;
+
+  /* Case 2: Middle/End */
+  s.Cache s.Update s.Dim s.Pos s.EndPos s.Total
+    /* FIX REVERTED: Slice 0 to Pos (exclusive) is correct. */
+    , <TSlice s.Cache s.Dim 0 s.Pos 1> : s.Prefix
+    , <TSlice s.Cache s.Dim s.EndPos s.Total 1> : s.Suffix
+    , <TClone s.Prefix> : s.PrefixSafe
+    , <TClone s.Suffix> : s.SuffixSafe
+    = <TCat (s.PrefixSafe s.Update s.SuffixSafe) s.Dim>;
+}
+
+/* Other Helpers */
 PrepareGQA {
   s.T s.Heads s.KVHeads, <Compare s.Heads s.KVHeads> : '0' = s.T;
-  s.T s.Heads s.KVHeads = <TRepeat s.T 2 <Div s.Heads s.KVHeads>>;
+  s.T s.Heads s.KVHeads = <TRepeat s.T 1 1 <Div s.Heads s.KVHeads> 1>;
 }
 
 ApplyMask {
-  s.Scores s.Mask
-    = <TShape s.Scores> : (s.B s.H s.S s.S_Total)
-    = <Compare s.S 1> : {
-        '0' = s.Scores; 
-        '+' = <TAdd s.Scores s.Mask>;
+  s.Scores s.Mask s.Pos = <DoApplyMask s.Scores s.Mask s.Pos <TShape s.Scores>>;
+}
+DoApplyMask {
+  s.Scores s.Mask s.Pos (s.B s.H s.S s.Total) = <SliceAndAdd s.Scores s.Mask s.Pos s.S>;
+  s.Scores s.Mask s.Pos s.B s.H s.S s.Total = <SliceAndAdd s.Scores s.Mask s.Pos s.S>;
+}
+SliceAndAdd {
+  s.Scores s.Mask s.Pos s.SeqLen
+    , <Compare s.SeqLen 1> : {
+        '0' = s.Scores;
+        '+' = <TAdd s.Scores <TSlice <TSlice s.Mask 2 s.Pos <Add s.Pos s.SeqLen> 1> 3 0 <Add s.Pos s.SeqLen> 1>>;
         '-' = s.Scores;
       };
 }
 
-* This stays for now
+TLinearNoBias {
+  s.Input s.Weight
+    = <TTranspose s.Weight 0 1> : s.WeightT
+    , <TMatMul s.Input s.WeightT> : s.Output
+    , <TFree s.WeightT> : e.Ignore
+    = s.Output;
+}
+
 Sqrt { 64=8; 128=11; 96=9; s.N=10; }
 TFreeAllExcept { (e.Keep) = ; }

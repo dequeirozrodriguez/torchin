@@ -8,7 +8,6 @@ LIBTORCH="${LIBTORCH:-$HOME/qwen3_perl/qwen3_refal/torch/libtorch}"
 REFAL_HOME="${REFAL_HOME:-$HOME/qwen3_perl/refal-5-lambda}"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -16,11 +15,9 @@ NC='\033[0m' # No Color
 
 echo -e "${YELLOW}=== Refal-Torch Build ===${NC}"
 
-# Target setup
 TARGET="${1:-examples/01_basic_tensors}"
 OUTPUT="${2:-program}"
 
-# Define Standard Library Sources
 SOURCES=(
     "$REFAL_HOME/lib/src/Library.ref"
     "$PROJECT_DIR/src/core/TensorCore.ref"
@@ -33,9 +30,17 @@ SOURCES=(
     "$PROJECT_DIR/src/nn/TensorOptim.ref"
     "$PROJECT_DIR/src/util/TensorIO.ref"
     "$PROJECT_DIR/src/util/TensorUtil.ref"
+
+    # --- QWEN3 MODULES ---
+    "$PROJECT_DIR/src/models/QwenConfig.ref"
+    "$PROJECT_DIR/src/models/WeightLoader.ref"
+    "$PROJECT_DIR/src/models/QwenMLP.ref"
+    "$PROJECT_DIR/src/models/QwenAttention.ref"
+    "$PROJECT_DIR/src/models/QwenBlock.ref"
+    "$PROJECT_DIR/src/models/QwenModel.ref"
+    "$PROJECT_DIR/src/models/QwenGenerate.ref"
 )
 
-# Add Target File
 if [ -f "$PROJECT_DIR/${TARGET}.ref" ]; then
     SOURCES+=("$PROJECT_DIR/${TARGET}.ref")
 elif [ -f "$TARGET" ]; then
@@ -45,8 +50,6 @@ else
     exit 1
 fi
 
-# --- THE MISSING PART I FORGOT ---
-# If building a test, inject the test framework source
 if [[ "$TARGET" == *"test/"* ]] || [[ "$TARGET" == *"test_"* ]]; then
     echo "Adding test framework..."
     # Insert test_framework before the last file (the target)
@@ -60,7 +63,7 @@ if [ -f "$PROJECT_DIR/include/RefTorch.refi" ]; then
     cp "$PROJECT_DIR/include/RefTorch.refi" "$PROJECT_DIR/RefTorch.refi"
 fi
 
-# Export vars for wrapper
+# vars for wrapper
 export LIBTORCH
 export REFAL_HOME
 
@@ -70,7 +73,7 @@ rlc -x -Od --prefix= \
     "${SOURCES[@]}" \
     -o "$PROJECT_DIR/$OUTPUT"
 
-# Cleanup
+# cleanup
 rm -f "$PROJECT_DIR/RefTorch.refi"
 
 if [ $? -eq 0 ]; then

@@ -1,58 +1,96 @@
 * src/models/QwenGenerate.ref
 
-$EXTERN QwenModelForward, TArgmax, TAdd, TSlice, TGetDim, TFree;
-$EXTERN TPrecomputeFreqs, TCausalMask, TZeros;
+$EXTERN QwenModelForward, TArgmax, TAdd, TSlice, TGetDim, TFree, TItem, TSub;
+$EXTERN TPrecomputeFreqs, TCausalMask, TZeros, TReshape;
 $EXTERN ConfigGet;
 
 $ENTRY QwenGenerate {
-  s.Weights (e.Cfg) s.PromptTokens s.MaxNew
-    * Init
+  /* Accept t.Weights tuple */
+  t.Weights (e.Cfg) s.PromptTokens s.MaxNew
+    /* DEBUG: Print what we received */
+    , <Prout 'QwenGenerate: Received t.Weights = ' t.Weights> : e.Dbg0
+    
+    /* Init Config */
     = <ConfigGet (e.Cfg) 'max_position_embeddings'> : s.MaxSeq
-    = <ConfigGet (e.Cfg) 'head_dim'> : s.HeadDim
-    = <ConfigGet (e.Cfg) 'rope_theta'> : s.Theta
+    , <ConfigGet (e.Cfg) 'head_dim'> : s.HeadDim
+    , <ConfigGet (e.Cfg) 'rope_theta'> : s.Theta
     
-    * Precompute Static Tensors
-    = <TPrecomputeFreqs s.HeadDim s.MaxSeq s.Theta> : s.Freqs
-    = <TCausalMask s.MaxSeq> : s.Mask
+    /* Static Tensors */
+    , <TPrecomputeFreqs s.HeadDim s.MaxSeq s.Theta> : s.Freqs
+    , <TReshape <TCausalMask s.MaxSeq> 1 1 s.MaxSeq s.MaxSeq> : s.Mask
     
-    * Init KV Caches (List of (K V) tuples)
-    = <InitKVCaches (e.Cfg) <ConfigGet (e.Cfg) 'num_hidden_layers'>> : e.KVCaches
+    /* Init Cache */
+    , <InitKVCaches (e.Cfg) <ConfigGet (e.Cfg) 'num_hidden_layers'>> : e.KVCaches
     
-    * Generation Loop
-    = <GenerateLoop s.PromptTokens s.Weights e.KVCaches (e.Cfg) s.Freqs s.Mask 0 s.MaxNew> 
+    /* ============================== */
+    /* STEP 1: PREFILL (Prompt)       */
+    /* ============================== */
+    , <TGetDim s.PromptTokens 1> : s.PromptLen
+    
+    /* Unpack Weights */
+    , t.Weights : ((e.Layers) (e.Embeds))
+    
+    /* DEBUG: Check what we unpacked */
+    , <Prout 'QwenGenerate: Unpacked e.Embeds = ' e.Embeds> : e.DbgE
+    
+    /* Forward pass on the full prompt */
+    , <QwenModelForward s.PromptTokens (e.Layers) (e.Embeds) (e.KVCaches) (e.Cfg) s.Freqs s.Mask 0> 
+      : s.Logits (e.KV_PostPrefill)
+    
+    /* Get Last Logit and sample first token */
+    , <GetLastLogit s.Logits s.PromptLen> : s.LastLogit
+    , <TArgmax s.LastLogit> : s.TokScalar
+    , <TReshape s.TokScalar 1 1> : s.FirstNewTok   /* CRITICAL: Reshape to [1,1] for embedding! */
+    
+    /* ============================== */
+    /* STEP 2: DECODE (Generation)    */
+    /* ============================== */
+    , <GenerateLoop s.FirstNewTok t.Weights e.KV_PostPrefill (e.Cfg) s.Freqs s.Mask s.PromptLen s.MaxNew> 
       : e.OutputTokens
       
     = e.OutputTokens;
 }
 
 GenerateLoop {
-  * Stop Condition: EOS Token 151645
-  151645 s.W e.KV (e.Cfg) s.F s.M s.Pos s.Left = ; 
+  /* Done */
+  s.Tok t.W e.KV (e.Cfg) s.F s.M s.Pos 0 = ;
   
-  * Normal Stop: Max Length reached
-  s.Tok s.W e.KV (e.Cfg) s.F s.M s.Pos 0 = ;
-  
-  s.CurrentTok s.W e.KV (e.Cfg) s.F s.M s.Pos s.Left
-    * Forward Pass
-    = <QwenModelForward s.CurrentTok s.W (e.KV) (e.Cfg) s.F s.M s.Pos> 
-      : s.Logits (e.NewKV)
-    
-    * Greedy Sample
-    = <TSlice s.Logits 1 0 1 1> : s.LastLogit
-    = <TArgmax s.LastLogit> : s.NextTok
-    
-    * Recurse
-    = <Prout 'Gen: ' s.NextTok>
-    = s.NextTok <GenerateLoop s.NextTok s.W e.NewKV (e.Cfg) s.F s.M <Add s.Pos 1> <Sub s.Left 1>>;
+  /* Decode Step */
+  s.CurrentTok t.W e.KV (e.Cfg) s.F s.M s.Pos s.Left
+    /* Check EOS */
+    , <TItem s.CurrentTok> : s.Val
+    , <Compare s.Val 151645> : {
+        '0' = ; 
+        
+        e.Else
+          /* Unpack Weights */
+          , t.W : ((e.Layers) (e.Embeds))
+          
+          /* Forward */
+          = <QwenModelForward s.CurrentTok (e.Layers) (e.Embeds) (e.KV) (e.Cfg) s.F s.M s.Pos> 
+            : s.Logits (e.NewKV)
+          
+          /* Sample - CRITICAL: Reshape to [1,1] for next embedding! */
+          , <GetLastLogit s.Logits 1> : s.NextLogit
+          , <TArgmax s.NextLogit> : s.NextTokScalar
+          , <TReshape s.NextTokScalar 1 1> : s.NextTok
+          
+          /* Recurse */
+          = s.NextTok <GenerateLoop s.NextTok t.W e.NewKV (e.Cfg) s.F s.M <Add s.Pos 1> <Sub s.Left 1>>;
+      };
 }
 
-InitKVCaches {
+GetLastLogit {
+  s.Logits s.SeqLen = <TSlice s.Logits 1 <Sub s.SeqLen 1> s.SeqLen 1>;
+}
+
+$ENTRY InitKVCaches {
   (e.Cfg) 0 = ;
   (e.Cfg) s.N
     = <ConfigGet (e.Cfg) 'max_position_embeddings'> : s.S
-    = <ConfigGet (e.Cfg) 'num_key_value_heads'> : s.H
-    = <ConfigGet (e.Cfg) 'head_dim'> : s.D
-    * Cache is [1, S, H, D]
+    , <ConfigGet (e.Cfg) 'num_key_value_heads'> : s.H
+    , <ConfigGet (e.Cfg) 'head_dim'> : s.D
     = (<TZeros 1 s.S s.H s.D> <TZeros 1 s.S s.H s.D>)
       <InitKVCaches (e.Cfg) <Sub s.N 1>>;
 }
+

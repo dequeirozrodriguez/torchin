@@ -1,23 +1,59 @@
-* QwenConfig.ref
+* src/models/QwenConfig.ref
+* Model configuration and hyperparameters
 
+$INCLUDE "RefTorch";
+
+*==============================================================================
+* QWEN3-0.6B CONFIGURATION
+* Format: Sequence of (('Key') Value) tuples
+*==============================================================================
 $ENTRY Qwen3Config_0_6B {
-  = (('vocab_size' 151936)
-     ('hidden_size' 1024)
-     ('intermediate_size' 3072)
-     ('num_hidden_layers' 28)
-     ('num_attention_heads' 16)
-     ('num_key_value_heads' 8)
-     ('head_dim' 128)
-     ('max_position_embeddings' 40960)
-     ('rms_norm_eps' 1e-6)
-     ('rope_theta' 1000000)
-     ('eos_token_id' 151645)
-     ('bos_token_id' 151643));
+  = (('vocab_size') 151936)
+    (('hidden_size') 1024)
+    (('intermediate_size') 2816)
+    (('num_hidden_layers') 28)
+    (('num_attention_heads') 16)
+    (('num_key_value_heads') 8)
+    (('head_dim') 64)
+    (('max_position_embeddings') 32768)
+    (('rms_norm_eps') 1)
+    (('rope_theta') 1000000)
+    (('tie_word_embeddings') 1)
+    (('eos_token_id') 151645)
+    (('bos_token_id') 151643);
 }
 
-* Lookup function used everywhere
+*==============================================================================
+* CONFIGURATION ACCESSOR
+*==============================================================================
+
+* <ConfigGet (e.Config) e.Key> == e.Value | 0
 $ENTRY ConfigGet {
-  ((e.Key s.Value) e.Rest) e.Key = s.Value;
-  (t.Other e.Rest) e.Key = <ConfigGet (e.Rest) e.Key>;
-  () e.Key = 0;  /* Default if not found */
+  (e.Config) e.Key = <DoLookup (e.Key) e.Config>;
+}
+
+DoLookup {
+  /* Match: Key matches exactly inside parens */
+  /* Using e.Value is safer than s.Value for numbers/strings */
+  (e.Key) ((e.Key) e.Value) e.Rest = e.Value;
+
+  /* Mismatch: Skip head and recurse */
+  (e.Key) t.Ignore e.Rest = <DoLookup (e.Key) e.Rest>;
+
+  /* End of list */
+  (e.Key) = 0;
+}
+
+*==============================================================================
+* DEBUG UTILS
+*==============================================================================
+$ENTRY DebugConfig {
+  (e.Cfg) = <DoDebug e.Cfg>;
+}
+
+DoDebug {
+  ((e.K) e.V) e.Rest 
+    = <Prout 'Key [' e.K '] -> ' e.V> 
+      <DoDebug e.Rest>;
+  () = <Prout 'End of Config'>;
 }

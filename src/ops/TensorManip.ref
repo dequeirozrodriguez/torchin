@@ -1046,3 +1046,26 @@ $ENTRY TTopPMask {
     return refalrts::cSuccess;
 %%
 }
+
+*==============================================================================
+* <TToLong s.TensorID> == s.TensorResult
+* Convert tensor to Long (int64) type - required for embedding indices
+*==============================================================================
+$ENTRY TToLong {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    if (content_b->tag != refalrts::cDataNumber) {
+        return refalrts::cRecognitionImpossible;
+    }
+    int id = content_b->number_info;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) return refalrts::cRecognitionImpossible;
+    
+    // Convert to kLong (Int64)
+    torch::Tensor result = t->to(torch::kLong);
+    RETURN_TENSOR(result);
+%%
+}

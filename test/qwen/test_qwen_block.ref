@@ -1,0 +1,178 @@
+* test/qwen/test_qwen_block.ref
+
+$INCLUDE "RefTorch";
+
+$EXTERN RunTests, AssertEq, CombineResults;
+$EXTERN QwenBlock, Qwen3Config_0_6B, ConfigGet;
+$EXTERN TRandn, TZeros, TShape, TFree, TGetDim;
+$EXTERN TPrecomputeFreqs, TCausalMask, TMul, TReshape;
+
+$ENTRY Go {
+  = <RunTests 
+      TestBlockOutputShape
+      TestBlockKVCachePropagation
+      TestBlockDifferentSeqLens
+    >;
+}
+
+*==============================================================================
+* TEST 1: Standard Output Shape (Prefill)
+*==============================================================================
+$ENTRY TestBlockOutputShape {
+  , <Prout 'Testing Block Output Shape...'> : e.Ignore
+  , <Qwen3Config_0_6B> : e.Cfg
+  , <ConfigGet (e.Cfg) 'hidden_size'> : s.Hidden
+  , <ConfigGet (e.Cfg) 'head_dim'> : s.HeadDim
+  , <ConfigGet (e.Cfg) 'rope_theta'> : s.Theta
+  
+  /* Create Weights: ((Attn) (QKNorm) (MLP) (Norms)) */
+  , <CreateBlockWeights (e.Cfg)> : (e.AttnW) (e.QKNorm) (e.MLPW) (s.N1 s.N2)
+  
+  /* Create Static Tensors */
+  , <TPrecomputeFreqs s.HeadDim 128 s.Theta> : s.F
+  
+  /* Reshape Mask to 4D (1, 1, Seq, Seq) for slicing compatibility */
+  , <TReshape <TCausalMask 128> 1 1 128 128> : s.M
+  
+  /* Create KV Cache with Batch Size 2 (matching input) */
+  , <CreateKVCache (e.Cfg) 2 128> : (s.KC s.VC)
+  
+  /* Input: Batch=2, Seq=4 */
+  , <TRandn 2 4 s.Hidden> : s.X
+  
+  /* Run Block */
+  , <QwenBlock s.X (e.AttnW) (e.QKNorm) (e.MLPW) (s.N1 s.N2) s.F s.M (e.Cfg) 0 (s.KC s.VC)>
+    : s.Out (s.KC2 s.VC2)
+    
+  /* FIX: Use ParseShape to handle flat or tuple returns from TShape */
+  , <ParseShape <TShape s.Out>> : (s.B s.S s.H)
+  
+  = <CombineResults <AssertEq 'Batch' s.B 2> <AssertEq 'Seq' s.S 4>>;
+}
+
+*==============================================================================
+* TEST 2: KV Cache Propagation
+*==============================================================================
+$ENTRY TestBlockKVCachePropagation {
+  , <Prout 'Testing Block KV Cache Passthrough...'> : e.Ignore
+  , <Qwen3Config_0_6B> : e.Cfg
+  , <ConfigGet (e.Cfg) 'hidden_size'> : s.Hidden
+  , <ConfigGet (e.Cfg) 'head_dim'> : s.HeadDim
+  , <ConfigGet (e.Cfg) 'rope_theta'> : s.Theta
+  
+  , <CreateBlockWeights (e.Cfg)> : (e.AttnW) (e.QKNorm) (e.MLPW) (s.N1 s.N2)
+  , <TPrecomputeFreqs s.HeadDim 10 s.Theta> : s.F
+  
+  /* Reshape Mask */
+  , <TReshape <TCausalMask 10> 1 1 10 10> : s.M
+  
+  , <CreateKVCache (e.Cfg) 1 10> : (s.KC s.VC)
+  
+  , <TRandn 1 1 s.Hidden> : s.X
+  
+  /* Run Block */
+  , <QwenBlock s.X (e.AttnW) (e.QKNorm) (e.MLPW) (s.N1 s.N2) s.F s.M (e.Cfg) 0 (s.KC s.VC)>
+    : s.Out (s.KC_New s.VC_New)
+  
+  /* Verify we got new cache tensors back */
+  = <CombineResults <AssertEq 'Returns 2 cache tensors' <IsTuple (s.KC_New s.VC_New)> 1>>;
+}
+
+*==============================================================================
+* TEST 3: Different Sequence Lengths (Prefill vs Decode)
+*==============================================================================
+$ENTRY TestBlockDifferentSeqLens {
+  , <Prout 'Testing block with different seq lengths...'> : e.Ignore
+  , <Qwen3Config_0_6B> : e.Cfg
+  , <ConfigGet (e.Cfg) 'hidden_size'> : s.Hidden
+  , <ConfigGet (e.Cfg) 'head_dim'> : s.HeadDim
+  , <ConfigGet (e.Cfg) 'rope_theta'> : s.Theta
+  
+  , <CreateBlockWeights (e.Cfg)> : (e.AttnW) (e.QKNorm) (e.MLPW) (s.N1 s.N2)
+  , <TPrecomputeFreqs s.HeadDim 128 s.Theta> : s.F
+  
+  /* Reshape Mask */
+  , <TReshape <TCausalMask 128> 1 1 128 128> : s.M
+  
+  , <CreateKVCache (e.Cfg) 1 128> : (s.KC s.VC)
+  
+  /* 1. Run Prefill (Seq=4) */
+  , <TRandn 1 4 s.Hidden> : s.X1
+  
+  , <QwenBlock s.X1 (e.AttnW) (e.QKNorm) (e.MLPW) (s.N1 s.N2) s.F s.M (e.Cfg) 0 (s.KC s.VC)>
+    : s.Out1 (s.KC2 s.VC2)
+    
+  /* FIX: ParseShape */
+  , <ParseShape <TShape s.Out1>> : (s.B1 s.S1 s.H1)
+  
+  /* 2. Run Decode (Seq=1) at Pos=4 */
+  , <TRandn 1 1 s.Hidden> : s.X2
+  , <QwenBlock s.X2 (e.AttnW) (e.QKNorm) (e.MLPW) (s.N1 s.N2) s.F s.M (e.Cfg) 4 (s.KC2 s.VC2)>
+    : s.Out2 (s.KC3 s.VC3)
+  
+  /* FIX: ParseShape */
+  , <ParseShape <TShape s.Out2>> : (s.B2 s.S2 s.H2)
+  
+  = <CombineResults 
+      <AssertEq 'Prefill Seq' s.S1 4>
+      <AssertEq 'Decode Seq' s.S2 1>
+    >;
+}
+
+*==============================================================================
+* HELPERS
+*==============================================================================
+
+/* Helper to normalize shape return (Tuple vs Flat) */
+ParseShape {
+  (e.Dims) = (e.Dims);
+  e.Dims = (e.Dims);
+}
+
+IsTuple { (e.X) = 1; e.Any = 0; }
+
+$ENTRY CreateBlockWeights {
+  (e.Cfg)
+    , <ConfigGet (e.Cfg) 'hidden_size'> : s.H
+    , <ConfigGet (e.Cfg) 'intermediate_size'> : s.I
+    , <ConfigGet (e.Cfg) 'num_attention_heads'> : s.NH
+    , <ConfigGet (e.Cfg) 'num_key_value_heads'> : s.NKV
+    , <ConfigGet (e.Cfg) 'head_dim'> : s.D
+    
+    , <Mul s.NH s.D> : s.QDim
+    , <Mul s.NKV s.D> : s.KVDim
+    
+    /* Attention (No Bias per Qwen3 Config) */
+    , <TRandn s.QDim s.H> : s.WQ
+    , <TRandn s.KVDim s.H> : s.WK
+    , <TRandn s.KVDim s.H> : s.WV
+    , <TRandn s.H s.QDim> : s.WO
+    
+    /* QK Norms */
+    , <TRandn s.D> : s.QN
+    , <TRandn s.D> : s.KN
+    
+    /* MLP */
+    , <TRandn s.I s.H> : s.WG
+    , <TRandn s.I s.H> : s.WU
+    , <TRandn s.H s.I> : s.WD
+    
+    /* Block Norms */
+    , <TRandn s.H> : s.N1
+    , <TRandn s.H> : s.N2
+    
+    /* Return Structure */
+    = (s.WQ s.WK s.WV s.WO) 
+      (s.QN s.KN)
+      (s.WG s.WU s.WD)
+      (s.N1 s.N2);
+}
+
+$ENTRY CreateKVCache {
+  (e.Cfg) s.Batch s.Len
+    , <ConfigGet (e.Cfg) 'num_key_value_heads'> : s.H
+    , <ConfigGet (e.Cfg) 'head_dim'> : s.D
+    , <TZeros s.Batch s.Len s.H s.D> : s.K
+    , <TZeros s.Batch s.Len s.H s.D> : s.V
+    = (s.K s.V);
+}

@@ -23,6 +23,13 @@ namespace tensor_storage {
         return nullptr;
     }
 }
+
+inline bool read_int(refalrts::Iter& b, refalrts::Iter& e, int64_t& val) {
+    if (b == e || b->tag != refalrts::cDataNumber) return false;
+    val = b->number_info;
+    refalrts::move_left(b, e);
+    return true;
+}
 %%
 
 
@@ -132,6 +139,32 @@ $ENTRY TShape {
 %%
 }
 
+/* ============================================================================
+ * GET DIMENSION SIZE (Required by Tests)
+ * <TGetDim s.TensorID s.DimIndex> == s.Size
+ * ========================================================================== */
+$ENTRY TGetDim {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t id, dim;
+    if (!read_int(content_b, content_e, id)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, dim)) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor* t = tensor_storage::get(id);
+    if (!t) return refalrts::cRecognitionImpossible;
+    
+    int64_t ndim = t->dim();
+    if (dim < 0) dim += ndim;
+    
+    if (dim < 0 || dim >= ndim) return refalrts::cRecognitionImpossible;
+    
+    refalrts::reinit_number(arg_begin, t->size(dim));
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
 
 *==============================================================================
 * <TDim s.TensorID> == s.NumDimensions

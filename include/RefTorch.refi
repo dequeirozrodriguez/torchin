@@ -31,7 +31,7 @@ $EXTERN TFreeAll;    /* <TFreeAll> == empty */
 $EXTERN TFromList;   /* <TFromList (e.Shape) e.Values> == s.TensorID */
 $EXTERN TToList;     /* <TToList s.TensorID> == e.Values (x1000) */
 $EXTERN TItem;       /* <TItem s.TensorID> == s.Value (x1000) */
-
+$EXTERN TToLong;
 
 *==============================================================================
 * TensorInfo - Tensor Information and Queries

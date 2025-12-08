@@ -1,42 +1,63 @@
 * src/models/QwenModel.ref
 
 $EXTERN QwenBlock, TEmbedding, TRMSNorm, TLinearNoBias, TFree;
+$EXTERN TToLong, TShape;
 $EXTERN ConfigGet;
 
-* <QwenModelForward s.Tokens (t.Weights) (e.KVCaches) (e.Cfg) s.Freqs s.Mask s.Pos>
-* Returns: s.Logits (e.NewKVCaches)
+* <QwenModelForward s.Tokens (e.Layers) (s.Emb s.FinalNorm s.Head) ...>
 $ENTRY QwenModelForward {
-  s.Tokens (t.Layers) (s.Emb s.FinalNorm s.Head) (e.KVCaches) (e.Cfg) s.Freqs s.Mask s.Pos
-    * Embedding
-    = <TEmbedding s.Tokens s.Emb> : s.H
+  s.Tokens (e.Layers) (s.Emb s.FinalNorm s.Head) (e.KVCaches) (e.Cfg) s.Freqs s.Mask s.Pos
     
-    * Layers Loop
-    = <ForwardLayers s.H t.Layers (e.KVCaches) (e.Cfg) s.Freqs s.Mask s.Pos> 
+    /* DEBUG: Print input shape */
+    , <Prout 'ModelForward: Input shape = ' <TShape s.Tokens>> : e.D1
+    
+    /* CRITICAL: Convert to Long for embedding lookup */
+    , <TToLong s.Tokens> : s.TokensLong
+    
+    /* DEBUG: Print after TToLong */
+    , <Prout 'ModelForward: After TToLong = ' <TShape s.TokensLong>> : e.D2
+    
+    /* DEBUG: Print embedding weight ID and shape */
+    , <Prout 'ModelForward: s.Emb tensor ID = ' s.Emb> : e.D2b
+    , <Prout 'ModelForward: Embedding weight shape = ' <TShape s.Emb>> : e.D2c
+    
+    /* Embedding - NOTE: using comma to continue chain! */
+    , <TEmbedding s.TokensLong s.Emb> : s.H
+    
+    /* DEBUG: Print after embedding */
+    , <Prout 'ModelForward: After Embedding = ' <TShape s.H>> : e.D3
+    
+    /* Layers Loop */
+    , <ForwardLayers s.H (e.Layers) (e.KVCaches) (e.Cfg) s.Freqs s.Mask s.Pos> 
       : s.H_Final (e.NewKVCaches)
     
-    * Final Norm
-    = <ConfigGet (e.Cfg) 'rms_norm_eps'> : s.Eps
-    = <TRMSNorm s.H_Final s.FinalNorm s.Eps> : s.H_Norm
+    /* Final Norm */
+    , <ConfigGet (e.Cfg) 'rms_norm_eps'> : s.Eps
+    , <TRMSNorm s.H_Final s.FinalNorm s.Eps> : s.H_Norm
     
-    * LM Head
-    = <TLinearNoBias s.H_Norm s.Head> : s.Logits
-    = <TFree s.H_Final> <TFree s.H_Norm>
+    /* LM Head */
+    , <TLinearNoBias s.H_Norm s.Head> : s.Logits
+    , <TFree s.H_Final> <TFree s.H_Norm> : e.Ignore
     
     = s.Logits (e.NewKVCaches);
 }
 
 ForwardLayers {
-  s.H (/*Empty*/) () (e.Cfg) s.F s.M s.P = s.H ();
+  /* Base Case: No more layers */
+  s.H () () (e.Cfg) s.Freqs s.Mask s.Pos = s.H ();
   
-  s.H (t.BlockW e.RestW) (t.KV e.RestKV) (e.Cfg) s.F s.M s.P
-    * Structure: ((Norm1 Norm2) (Attn) (QKNorms) (MLP))
-    = t.BlockW : ((s.N1 s.N2) t.Attn t.QKNorm t.MLP)
+  /* Recursive Step */
+  s.H (t.LayerWeights e.RestLayers) (t.KV e.RestKV) (e.Cfg) s.Freqs s.Mask s.Pos
     
-    = <QwenBlock s.H t.Attn t.QKNorm t.MLP (s.N1 s.N2) s.F s.M (e.Cfg) s.P t.KV> 
-      : s.H_New t.KV_New
+    /* Destructure Weights */
+    , t.LayerWeights : ((s.N1 s.N2) t.Attn t.QKNorm t.MLP)
+    
+    , <QwenBlock s.H t.Attn t.QKNorm t.MLP (s.N1 s.N2) s.Freqs s.Mask (e.Cfg) s.Pos t.KV> 
+      : s.H_Next t.KV_New
       
-    = <ForwardLayers s.H_New (e.RestW) (e.RestKV) (e.Cfg) s.F s.M s.P> 
+    , <ForwardLayers s.H_Next (e.RestLayers) (e.RestKV) (e.Cfg) s.Freqs s.Mask s.Pos> 
       : s.H_Final (e.FinalKVs)
       
     = s.H_Final (t.KV_New e.FinalKVs);
 }
+

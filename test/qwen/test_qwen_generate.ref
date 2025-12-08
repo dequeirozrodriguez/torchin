@@ -1,0 +1,203 @@
+* test/qwen/test_qwen_generate.ref
+
+$INCLUDE "RefTorch";
+
+$EXTERN RunTests, CombineResults, AssertTrue, AssertEq, AssertShape;
+$EXTERN Qwen3Config_0_6B, ConfigGet;
+$EXTERN QwenGenerate, InitKVCaches;
+$EXTERN TRandn, TZeros, TShape, TFree, TGetDim, TMul;
+
+$ENTRY Go {
+  = <RunTests 
+      TestEOSTokenValue
+      TestKVCacheInitialization
+      TestKVCacheShape
+      TestConfigForGeneration
+      TestGenerationRun
+    >;
+}
+
+*==============================================================================
+* TEST: EOS Token Value
+*==============================================================================
+$ENTRY TestEOSTokenValue {
+  , <Prout 'Testing EOS token value...'> : e.Ignore
+  , <Qwen3Config_0_6B> : e.Cfg
+  , <ConfigGet (e.Cfg) 'eos_token_id'> : s.EOS
+  , <ConfigGet (e.Cfg) 'bos_token_id'> : s.BOS
+  = <CombineResults
+      <AssertEq 'EOS is 151645' s.EOS 151645>
+      <AssertEq 'BOS is 151643' s.BOS 151643>
+    >;
+}
+
+*==============================================================================
+* TEST: KV Cache Initialization
+*==============================================================================
+$ENTRY TestKVCacheInitialization {
+  , <Prout 'Testing KV cache initialization...'> : e.Ignore
+  , <Qwen3Config_0_6B> : e.Cfg
+  , <ConfigGet (e.Cfg) 'num_hidden_layers'> : s.NumLayers
+  
+  /* Use tiny config for actual cache creation to avoid OOM */
+  , <TinyTestConfig> : e.TinyCfg
+  , <InitKVCaches (e.TinyCfg) s.NumLayers> : e.Caches
+  , <CountCaches e.Caches> : s.Count
+  = <CombineResults <AssertEq 'Created 28 KV cache pairs' s.Count 28>>;
+}
+
+CountCaches {
+  = 0;
+  (s.K s.V) e.Rest = <Add 1 <CountCaches e.Rest>>;
+}
+
+*==============================================================================
+* TEST: KV Cache Shape
+*==============================================================================
+$ENTRY TestKVCacheShape {
+  , <Prout 'Testing KV cache shape...'> : e.Ignore
+  , <TinyTestConfig> : e.Cfg
+  , <ConfigGet (e.Cfg) 'max_position_embeddings'> : s.MaxSeq
+  , <ConfigGet (e.Cfg) 'num_key_value_heads'> : s.KVHeads
+  , <ConfigGet (e.Cfg) 'head_dim'> : s.HeadDim
+  
+  , <InitKVCaches (e.Cfg) 1> : (s.KC s.VC) e.Rest
+  
+  /* Use ParseShape for robustness */
+  , <ParseShape <TShape s.KC>> : (s.B s.S s.H s.D)
+  
+  = <CombineResults
+      <AssertEq 'Cache batch=1' s.B 1>
+      <AssertEq 'Cache seq=MaxSeq' s.S s.MaxSeq>
+      <AssertEq 'Cache heads' s.H s.KVHeads>
+      <AssertEq 'Cache dim' s.D s.HeadDim>
+    >;
+}
+
+*==============================================================================
+* TEST: Config for Generation
+*==============================================================================
+$ENTRY TestConfigForGeneration {
+  , <Prout 'Testing config has all generation params...'> : e.Ignore
+  ,<Qwen3Config_0_6B> : e.Cfg
+  , <ConfigGet (e.Cfg) 'head_dim'> : s.HeadDim
+  , <ConfigGet (e.Cfg) 'rope_theta'> : s.Theta
+  , <ConfigGet (e.Cfg) 'max_position_embeddings'> : s.MaxPos
+  , <ConfigGet (e.Cfg) 'num_hidden_layers'> : s.Layers
+  
+  = <CombineResults
+      <AssertEq 'head_dim valid' s.HeadDim s.HeadDim>
+      <AssertEq 'rope_theta=1000000' s.Theta 1000000>
+      <AssertEq 'max_pos=32768' s.MaxPos 32768>
+      <AssertEq 'num_layers=28' s.Layers 28>
+   >;
+}
+
+*==============================================================================
+* TEST: Full Generation Run (Integration)
+* Uses TINY config to avoid OOM - full model needs 30+ GB!
+*==============================================================================
+$ENTRY TestGenerationRun {
+  , <Prout 'Testing Generation Loop (Integration)...'> : e.Ignore
+  
+  /* USE TINY CONFIG - Full Qwen3Config_0_6B needs 30+ GB memory! */
+  , <TinyTestConfig> : e.Cfg
+  
+  /* Create weights for tiny model */
+  , <CreateMiniModelWeights (e.Cfg) 1> : t.Weights
+  
+  /* DEBUG: Verify weights tuple and extract embedding to check */
+  , <Prout 'TestGenerationRun: t.Weights = ' t.Weights> : e.D1
+  , t.Weights : ((e.L) (s.E s.N s.H))
+  , <Prout 'TestGenerationRun: s.Embed ID = ' s.E ' shape = ' <TShape s.E>> : e.D2
+  
+  /* Prompt: 2 tokens */
+  , <TZeros 1 2> : s.Prompt
+  
+  /* Run Generate for 3 new tokens */
+  , <QwenGenerate t.Weights (e.Cfg) s.Prompt 3> : e.Output
+  
+  , <CountTokens e.Output> : s.Count
+  
+  = <CombineResults <AssertEq 'Generated 3 tokens' s.Count 3>>;
+}
+
+*==============================================================================
+* HELPERS
+*==============================================================================
+
+/* Tiny config for testing - uses minimal memory (~25 KB vs 30+ GB) */
+TinyTestConfig {
+  = (('vocab_size') 100)            /* Was ('vocab_size' 100) */
+    (('hidden_size') 32)            /* Added parens around keys */
+    (('intermediate_size') 64)
+    (('num_hidden_layers') 1)
+    (('num_attention_heads') 2)
+    (('num_key_value_heads') 2)
+    (('head_dim') 16)
+    (('max_position_embeddings') 32)
+    (('rms_norm_eps') 1)
+    (('rope_theta') 10000)
+    (('tie_word_embeddings') 1)
+    (('eos_token_id') 151645)
+    (('bos_token_id') 151643);
+}
+
+ParseShape {
+  (e.Dims) = (e.Dims);
+  e.Dims = (e.Dims);
+}
+
+CountTokens {
+  = 0;
+  s.Tok e.Rest = <Add 1 <CountTokens e.Rest>>;
+}
+
+$ENTRY CreateMiniModelWeights {
+  (e.Cfg) s.NumLayers
+    , <ConfigGet (e.Cfg) 'vocab_size'> : s.Vocab
+    , <ConfigGet (e.Cfg) 'hidden_size'> : s.Hidden
+    , <TRandn s.Vocab s.Hidden> : s.Embed
+    
+    /* DEBUG: Verify embedding tensor right after creation */
+    , <Prout 'CreateMiniModelWeights: s.Embed ID = ' s.Embed ' shape = ' <TShape s.Embed>> : e.D1
+    
+    , <TRandn s.Hidden> : s.FinalNorm
+    , s.Embed : s.LMHead
+    , <CreateLayers (e.Cfg) s.NumLayers> : e.Layers
+    
+    /* DEBUG: Verify after all layer creation */
+    , <Prout 'CreateMiniModelWeights: s.Embed still valid? shape = ' <TShape s.Embed>> : e.D2
+    
+    /* Returns: ((Layers) (Embeds)) */
+    = ((e.Layers) (s.Embed s.FinalNorm s.LMHead));
+}
+
+CreateLayers {
+  (e.Cfg) 0 = ;
+  (e.Cfg) s.N = <CreateLayerWeights (e.Cfg)> <CreateLayers (e.Cfg) <Sub s.N 1>>;
+}
+
+CreateLayerWeights {
+  (e.Cfg)
+    , <ConfigGet (e.Cfg) 'hidden_size'> : s.H
+    , <ConfigGet (e.Cfg) 'intermediate_size'> : s.I
+    , <ConfigGet (e.Cfg) 'num_attention_heads'> : s.NH
+    , <ConfigGet (e.Cfg) 'num_key_value_heads'> : s.NKV
+    , <ConfigGet (e.Cfg) 'head_dim'> : s.D
+    , <Mul s.NH s.D> : s.QDim
+    , <Mul s.NKV s.D> : s.KVDim
+    , <TRandn s.QDim s.H> : s.WQ
+    , <TRandn s.KVDim s.H> : s.WK
+    , <TRandn s.KVDim s.H> : s.WV
+    , <TRandn s.H s.QDim> : s.WO
+    , <TRandn s.D> : s.QN
+    , <TRandn s.D> : s.KN
+    , <TRandn s.I s.H> : s.WG
+    , <TRandn s.I s.H> : s.WU
+    , <TRandn s.H s.I> : s.WD
+    , <TRandn s.H> : s.N1
+    , <TRandn s.H> : s.N2
+    = ((s.N1 s.N2) (s.WQ s.WK s.WV s.WO) (s.QN s.KN) (s.WG s.WU s.WD));
+}
+

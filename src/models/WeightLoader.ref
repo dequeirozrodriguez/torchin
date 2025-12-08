@@ -6,17 +6,20 @@ $EXTERN Prout, TString;
 $ENTRY LoadQwenWeights {
   e.BasePath s.NumLayers
     = <Prout 'Loading Embeddings...'>
-      <TLoad <Cat e.BasePath '/model.embed_tokens.weight.pt'>> : s.Embed
+    : e.Ignore1
+    , <TLoad <Cat e.BasePath '/model.embed_tokens.weight.pt'>> : s.Embed
       
-    = <Prout 'Loading Final Norm...'>
-      <TLoad <Cat e.BasePath '/model.norm.weight.pt'>> : s.FinalNorm
+    , <Prout 'Loading Final Norm...'>
+    : e.Ignore2
+    , <TLoad <Cat e.BasePath '/model.norm.weight.pt'>> : s.FinalNorm
       
-    = <Prout 'Tying Weights (LM Head = Embedding)...'>
-      * Qwen3 Ties Weights: Reuse Embed Tensor ID
-      = s.Embed : s.LMHead
+    , <Prout 'Tying Weights (LM Head = Embedding)...'>
+    : e.Ignore3
+    , s.Embed : s.LMHead
       
-    = <Prout 'Loading ' s.NumLayers ' Layers...'>
-      <LoadLayers e.BasePath 0 s.NumLayers> : e.Layers
+    , <Prout 'Loading ' s.NumLayers ' Layers...'>
+    : e.Ignore4
+    , <LoadLayers e.BasePath 0 s.NumLayers> : e.Layers
       
     = (e.Layers) (s.Embed s.FinalNorm s.LMHead);
 }
@@ -25,33 +28,33 @@ LoadLayers {
   e.BasePath s.Idx s.Max, <Compare s.Idx s.Max> : '+' = ;
   e.BasePath s.Idx s.Max
     = <Prout '  Layer ' s.Idx '...'>
-      <LoadOneBlock e.BasePath s.Idx> : t.Block
-      <LoadLayers e.BasePath <Add s.Idx 1> s.Max> : e.Rest
+    : e.Ignore
+    , <LoadOneBlock e.BasePath s.Idx> : t.Block
+    , <LoadLayers e.BasePath <Add s.Idx 1> s.Max> : e.Rest
     = t.Block e.Rest;
 }
 
 LoadOneBlock {
   e.Base s.Idx
-    * Block Norms
+    /* Block Norms */
     = <TLoad <WeightPath e.Base s.Idx 'input_layernorm'>> : s.InNorm
-    = <TLoad <WeightPath e.Base s.Idx 'post_attention_layernorm'>> : s.PostNorm
+    , <TLoad <WeightPath e.Base s.Idx 'post_attention_layernorm'>> : s.PostNorm
     
-    * Attention Projections (No Bias files loaded!)
-    = <TLoad <WeightPath e.Base s.Idx 'self_attn.q_proj'>> : s.WQ
-    = <TLoad <WeightPath e.Base s.Idx 'self_attn.k_proj'>> : s.WK
-    = <TLoad <WeightPath e.Base s.Idx 'self_attn.v_proj'>> : s.WV
-    = <TLoad <WeightPath e.Base s.Idx 'self_attn.o_proj'>> : s.WO
+    /* Attention Projections */
+    , <TLoad <WeightPath e.Base s.Idx 'self_attn.q_proj'>> : s.WQ
+    , <TLoad <WeightPath e.Base s.Idx 'self_attn.k_proj'>> : s.WK
+    , <TLoad <WeightPath e.Base s.Idx 'self_attn.v_proj'>> : s.WV
+    , <TLoad <WeightPath e.Base s.Idx 'self_attn.o_proj'>> : s.WO
     
-    * QK-NORM Weights (CRITICAL)
-    = <TLoad <WeightPath e.Base s.Idx 'self_attn.q_norm'>> : s.QNorm
-    = <TLoad <WeightPath e.Base s.Idx 'self_attn.k_norm'>> : s.KNorm
+    /* QK-NORM Weights */
+    , <TLoad <WeightPath e.Base s.Idx 'self_attn.q_norm'>> : s.QNorm
+    , <TLoad <WeightPath e.Base s.Idx 'self_attn.k_norm'>> : s.KNorm
     
-    * MLP
-    = <TLoad <WeightPath e.Base s.Idx 'mlp.gate_proj'>> : s.Gate
-    = <TLoad <WeightPath e.Base s.Idx 'mlp.up_proj'>> : s.Up
-    = <TLoad <WeightPath e.Base s.Idx 'mlp.down_proj'>> : s.Down
+    /* MLP */
+    , <TLoad <WeightPath e.Base s.Idx 'mlp.gate_proj'>> : s.Gate
+    , <TLoad <WeightPath e.Base s.Idx 'mlp.up_proj'>> : s.Up
+    , <TLoad <WeightPath e.Base s.Idx 'mlp.down_proj'>> : s.Down
     
-    * Return: ((Norms) (AttnWeights) (AttnNorms) (MLP))
     = ((s.InNorm s.PostNorm) 
        (s.WQ s.WK s.WV s.WO) 
        (s.QNorm s.KNorm) 
@@ -60,7 +63,7 @@ LoadOneBlock {
 
 WeightPath {
   e.Base s.Idx e.Name
-    = <Cat e.Base '/model.layers.' <Symb s.Idx> '.' e.Name '.weight.pt'>;
+    = <Cat e.Base '/layer_' <Symb s.Idx> '_' e.Name '.weight.pt'>;
 }
 
 Cat { e.A = e.A; e.A e.B = e.A <Cat e.B>; }

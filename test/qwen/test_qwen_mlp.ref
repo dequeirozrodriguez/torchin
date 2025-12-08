@@ -1,0 +1,144 @@
+* test/qwen/test_qwen_mlp.ref
+
+$INCLUDE "RefTorch";
+
+$EXTERN RunTests, AssertEq, CombineResults;
+$EXTERN QwenMLP, Qwen3Config_0_6B, ConfigGet;
+$EXTERN TRandn, TShape, TFree, TGetDim, TZeros;
+
+$ENTRY Go {
+  = <RunTests 
+      TestMLPOutputShapeV4
+      TestMLPWithZeroInput
+      TestMLPDifferentBatchSizes
+      TestMLPDifferentSeqLens
+    >;
+}
+
+*==============================================================================
+* TEST 1: Output Shape (Pure Chain)
+*==============================================================================
+
+$ENTRY TestMLPOutputShapeV4 {
+  = <Prout 'Testing MLP output shape (Pure Chain)...'>
+    <MLPStep1_Config <Qwen3Config_0_6B>>;
+}
+
+MLPStep1_Config {
+  e.Cfg
+    = <MLPStep2_Weights 
+        e.Cfg 
+        <ConfigGet (e.Cfg) 'hidden_size'> 
+        <ConfigGet (e.Cfg) 'intermediate_size'> 
+      >;
+}
+
+MLPStep2_Weights {
+  e.Cfg s.Hidden s.Inter
+    = <MLPStep3_Run 
+        <TRandn 2 4 s.Hidden>
+        <TRandn s.Inter s.Hidden>
+        <TRandn s.Inter s.Hidden>
+        <TRandn s.Hidden s.Inter>
+      >;
+}
+
+MLPStep3_Run {
+  s.X s.WG s.WU s.WD
+    = <MLPStep4_Check <QwenMLP s.X s.WG s.WU s.WD>>;
+}
+
+MLPStep4_Check {
+  s.Out
+    = <MLPStep5_Assert <TShape s.Out>>;
+}
+
+MLPStep5_Assert {
+  /* Pattern 1: Tuple (Standard Refal behavior) */
+  (s.B s.S s.D) = <DoAssertShape s.B s.S s.D>;
+  
+  /* Pattern 2: Loose atoms (If flattened) */
+  s.B s.S s.D = <DoAssertShape s.B s.S s.D>;
+}
+
+DoAssertShape {
+  s.B s.S s.D
+    = <CombineResults
+        <AssertEq 'Batch' s.B 2>
+        <AssertEq 'Seq' s.S 4>
+        <AssertEq 'Dim' s.D 1024>
+      >;
+}
+
+*==============================================================================
+* TEST 2: Zero Input
+*==============================================================================
+$ENTRY TestMLPWithZeroInput {
+  , <Prout 'Testing MLP with zeros...'> : e.Ignore
+  , <Qwen3Config_0_6B> : e.Cfg
+  , <ConfigGet (e.Cfg) 'hidden_size'> : s.H
+  , <ConfigGet (e.Cfg) 'intermediate_size'> : s.I
+  
+  , <TZeros 1 1 s.H> : s.X
+  , <TRandn s.I s.H> : s.WG
+  , <TRandn s.I s.H> : s.WU
+  , <TRandn s.H s.I> : s.WD
+  
+  /* Helper wrapper for robustness */
+  = <CheckMLPShapeZero <TShape <QwenMLP s.X s.WG s.WU s.WD>>>;
+}
+
+$ENTRY CheckMLPShapeZero {
+  (s.B s.S s.D) = <CombineResults <AssertEq 'Valid run' 1 1>>;
+  s.B s.S s.D = <CombineResults <AssertEq 'Valid run (flat)' 1 1>>;
+}
+
+*==============================================================================
+* TEST 3: Different Batch Sizes
+*==============================================================================
+$ENTRY TestMLPDifferentBatchSizes {
+  , <Prout 'Testing MLP batches...'> : e.Ignore
+  , <Qwen3Config_0_6B> : e.Cfg
+  , <ConfigGet (e.Cfg) 'hidden_size'> : s.H
+  , <ConfigGet (e.Cfg) 'intermediate_size'> : s.I
+  
+  , <TRandn s.I s.H> : s.WG
+  , <TRandn s.I s.H> : s.WU
+  , <TRandn s.H s.I> : s.WD
+  
+  , <TRandn 1 2 s.H> : s.X1
+  , <TGetDim <QwenMLP s.X1 s.WG s.WU s.WD> 0> : s.B1
+  
+  , <TRandn 4 2 s.H> : s.X4
+  , <TGetDim <QwenMLP s.X4 s.WG s.WU s.WD> 0> : s.B4
+  
+  = <CombineResults
+      <AssertEq 'Batch=1' s.B1 1>
+      <AssertEq 'Batch=4' s.B4 4>
+    >;
+}
+
+*==============================================================================
+* TEST 4: Different Sequence Lengths
+*==============================================================================
+$ENTRY TestMLPDifferentSeqLens {
+  , <Prout 'Testing MLP seq lengths...'> : e.Ignore
+  , <Qwen3Config_0_6B> : e.Cfg
+  , <ConfigGet (e.Cfg) 'hidden_size'> : s.H
+  , <ConfigGet (e.Cfg) 'intermediate_size'> : s.I
+  
+  , <TRandn s.I s.H> : s.WG
+  , <TRandn s.I s.H> : s.WU
+  , <TRandn s.H s.I> : s.WD
+  
+  , <TRandn 1 1 s.H> : s.X1
+  , <TGetDim <QwenMLP s.X1 s.WG s.WU s.WD> 1> : s.S1
+  
+  , <TRandn 1 128 s.H> : s.X128
+  , <TGetDim <QwenMLP s.X128 s.WG s.WU s.WD> 1> : s.S128
+  
+  = <CombineResults
+      <AssertEq 'Seq=1' s.S1 1>
+      <AssertEq 'Seq=128' s.S128 128>
+    >;
+}

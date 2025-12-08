@@ -1,0 +1,143 @@
+* test/qwen/test_qwen_model.ref
+
+$INCLUDE "RefTorch";
+
+$EXTERN RunTests, AssertEq, CombineResults, AssertTrue;
+$EXTERN Qwen3Config_0_6B, ConfigGet;
+$EXTERN QwenModelForward, CreateKVCache;
+$EXTERN TRandn, TZeros, TShape, TFree, TGetDim, TMul;
+$EXTERN TPrecomputeFreqs, TCausalMask, TReshape;
+$EXTERN TEmbedding;
+
+$ENTRY Go {
+  = <RunTests 
+      TestModelOutputShape
+      TestModelLogitsVocabSize
+      TestModelMultiToken
+    >;
+}
+
+*==============================================================================
+* TEST 1: Full Model Forward Pass (Output Shape)
+*==============================================================================
+$ENTRY TestModelOutputShape {
+  , <Prout 'Testing full model output shape...'> : e.Ignore
+  , <Qwen3Config_0_6B> : e.Cfg
+  , <ConfigGet (e.Cfg) 'vocab_size'> : s.Vocab
+  , <ConfigGet (e.Cfg) 'head_dim'> : s.D
+  , <ConfigGet (e.Cfg) 'rope_theta'> : s.Theta
+  
+  /* Create Minimal Model (1 Layer for speed) */
+  , <CreateMiniModelWeights (e.Cfg) 1> : (e.Layers) (s.Embed s.Norm s.Head)
+  
+  /* Create State */
+  , <TPrecomputeFreqs s.D 10 s.Theta> : s.F
+  , <TReshape <TCausalMask 10> 1 1 10 10> : s.M
+  , <CreateKVCache (e.Cfg) 10> : (s.KC s.VC)
+  
+  /* FIX: Removed extra parens. e.KVCaches is a sequence of terms, e.g., (K V) */
+  , (s.KC s.VC) : e.KVCaches 
+  
+  /* Use TZeros for tokens */
+  , <TZeros 1 3> : s.Tokens
+  
+  /* Forward Pass */
+  , <QwenModelForward s.Tokens (e.Layers) (s.Embed s.Norm s.Head) (e.KVCaches) (e.Cfg) s.F s.M 0>
+    : s.Logits (e.NewKVCaches)
+    
+  , <ParseShape <TShape s.Logits>> : (s.B s.S s.V)
+  
+  = <CombineResults
+      <AssertEq 'Batch=1' s.B 1>
+      <AssertEq 'Seq=3' s.S 3>
+      <AssertEq 'Vocab Dim' s.V s.Vocab>
+    >;
+}
+
+*==============================================================================
+* TEST 2: Logits Vocab Size
+*==============================================================================
+$ENTRY TestModelLogitsVocabSize {
+  , <Prout 'Testing Vocab Size config...'> : e.Ignore
+  , <Qwen3Config_0_6B> : e.Cfg
+  , <ConfigGet (e.Cfg) 'vocab_size'> : s.V
+  = <CombineResults <AssertEq 'Vocab 151936' s.V 151936>>;
+}
+
+*==============================================================================
+* TEST 3: Multi-Token Support (Config Check)
+*==============================================================================
+$ENTRY TestModelMultiToken {
+  , <Prout 'Testing Multi-Token support...'> : e.Ignore
+  , <Qwen3Config_0_6B> : e.Cfg
+  , <ConfigGet (e.Cfg) 'max_position_embeddings'> : s.Max
+  = <CombineResults <AssertTrue 'Supports > 1024 tokens' <gt s.Max 1024>>>;
+}
+
+*==============================================================================
+* HELPERS
+*==============================================================================
+
+ParseShape {
+  (e.Dims) = (e.Dims);
+  e.Dims = (e.Dims);
+}
+
+gt { s.A s.B, <Compare s.A s.B> : '+' = 1; s.A s.B = 0; }
+
+$ENTRY CreateMiniModelWeights {
+  (e.Cfg) s.NumLayers
+    , <ConfigGet (e.Cfg) 'vocab_size'> : s.Vocab
+    , <ConfigGet (e.Cfg) 'hidden_size'> : s.Hidden
+    , <TRandn s.Vocab s.Hidden> : s.Embed
+    , <TRandn s.Hidden> : s.FinalNorm
+    , s.Embed : s.LMHead
+    , <CreateLayers (e.Cfg) s.NumLayers> : e.Layers
+    = (e.Layers) (s.Embed s.FinalNorm s.LMHead);
+}
+
+CreateLayers {
+  (e.Cfg) 0 = ;
+  (e.Cfg) s.N
+    = <CreateLayerWeights (e.Cfg)> 
+      <CreateLayers (e.Cfg) <Sub s.N 1>>;
+}
+
+CreateLayerWeights {
+  (e.Cfg)
+    , <ConfigGet (e.Cfg) 'hidden_size'> : s.H
+    , <ConfigGet (e.Cfg) 'intermediate_size'> : s.I
+    , <ConfigGet (e.Cfg) 'num_attention_heads'> : s.NH
+    , <ConfigGet (e.Cfg) 'num_key_value_heads'> : s.NKV
+    , <ConfigGet (e.Cfg) 'head_dim'> : s.D
+    , <Mul s.NH s.D> : s.QDim
+    , <Mul s.NKV s.D> : s.KVDim
+    
+    /* NO BIASES */
+    , <TRandn s.QDim s.H> : s.WQ
+    , <TRandn s.KVDim s.H> : s.WK
+    , <TRandn s.KVDim s.H> : s.WV
+    , <TRandn s.H s.QDim> : s.WO
+    
+    , <TRandn s.D> : s.QN
+    , <TRandn s.D> : s.KN
+    , <TRandn s.I s.H> : s.WG
+    , <TRandn s.I s.H> : s.WU
+    , <TRandn s.H s.I> : s.WD
+    , <TRandn s.H> : s.N1
+    , <TRandn s.H> : s.N2
+    
+    = ((s.N1 s.N2) 
+       (s.WQ s.WK s.WV s.WO) 
+       (s.QN s.KN) 
+       (s.WG s.WU s.WD));
+}
+
+$ENTRY CreateKVCache {
+  (e.Cfg) s.Len
+    , <ConfigGet (e.Cfg) 'num_key_value_heads'> : s.H
+    , <ConfigGet (e.Cfg) 'head_dim'> : s.D
+    , <TZeros 1 s.Len s.H s.D> : s.K
+    , <TZeros 1 s.Len s.H s.D> : s.V
+    = (s.K s.V);
+}

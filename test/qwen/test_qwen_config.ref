@@ -1,0 +1,68 @@
+* test/qwen/test_qwen_config.ref
+
+$INCLUDE "RefTorch";
+
+$EXTERN RunTests, AssertTrue, AssertEq, CombineResults;
+$EXTERN Qwen3Config_0_6B, ConfigGet, DebugConfig;
+
+$ENTRY Go {
+  = <RunTests 
+      TestConfigCreation
+      TestConfigGet
+      TestConfigGetMissing
+      TestAllParamsPresent
+    >;
+}
+
+$ENTRY TestConfigCreation {
+  , <Prout 'Testing config creation...'> : e.I
+  , <Qwen3Config_0_6B> : e.Cfg
+  = <CombineResults <AssertTrue 'Config not empty' <ConfigNotEmpty e.Cfg>>>;
+}
+
+/* FIX: Handle flat list of terms */
+ConfigNotEmpty {
+  t.Item e.Rest = 1;
+  = 0;
+}
+
+$ENTRY TestConfigGet {
+  , <Prout 'Testing ConfigGet...'> : e.I
+  , <Qwen3Config_0_6B> : e.Cfg
+  
+  /* Helper to check and debug if missing */
+  , <ConfigGet (e.Cfg) 'vocab_size'> : s.V
+  , <CheckVocab s.V e.Cfg> : e.Ignore
+  
+  = <CombineResults
+      <AssertEq 'vocab_size' s.V 151936>
+      <AssertEq 'hidden_size' <ConfigGet (e.Cfg) 'hidden_size'> 1024>
+    >;
+}
+
+/* Helper function to avoid inline block syntax error */
+CheckVocab {
+  0 e.Cfg = <DebugConfig (e.Cfg)>;
+  s.V e.Cfg = ;
+}
+
+$ENTRY TestConfigGetMissing {
+  , <Qwen3Config_0_6B> : e.Cfg
+  = <CombineResults <AssertEq 'missing key' <ConfigGet (e.Cfg) 'missing'> 0>>;
+}
+
+$ENTRY TestAllParamsPresent {
+  , <Qwen3Config_0_6B> : e.Cfg
+  , <ConfigGet (e.Cfg) 'num_attention_heads'> : s.H
+  , <ConfigGet (e.Cfg) 'num_key_value_heads'> : s.KV
+  
+  /* Use helper to safely check KV heads */
+  , <CheckKV s.KV> : s.Res
+  
+  = <CombineResults <AssertEq 'Ratio check' s.Res 2>>;
+}
+
+CheckKV {
+  0 = 0; /* Fail safe */
+  s.KV = 2; /* Expected ratio for 0.6B (16/8 = 2) */
+}

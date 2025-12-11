@@ -1,0 +1,70 @@
+* src/Run.ref - Main entry point for Qwen3 inference
+* Uses CORRECT dimensions from actual model
+
+$EXTERN LoadQwenWeights, QwenGenerate, ConfigGet, Qwen3Config_0_6B;
+$EXTERN TLoadBinary, TShape, Prout, TToLong;
+
+$ENTRY Go {
+  = <Main>;
+}
+
+Main {
+  /* 1. Header */
+  , <Prout '========================================='> : e.Ign0
+  , <Prout '       RefTorch Qwen3 Inference'> : e.Ign1
+  , <Prout '========================================='> : e.Ign1b
+  
+  /* 2. Setup Config - USE INFERENCE CONFIG (reduced max_seq) */
+  , <Qwen3Config_Inference> : e.Cfg
+  , <ConfigGet (e.Cfg) 'num_hidden_layers'> : s.Layers
+  , <ConfigGet (e.Cfg) 'max_position_embeddings'> : s.MaxSeq
+  , <Prout 'Config: ' s.Layers ' layers, max_seq=' s.MaxSeq> : e.Ign2
+  
+  /* 3. Load Weights */
+  , <Prout 'Loading weights...'> : e.Ign3
+  , <LoadQwenWeights ('/home/dieguez/qwen3_perl/torchin/torchin/qwen_data') e.Cfg> : t.Weights
+  , <Prout 'Weights loaded!'> : e.Ign4
+  
+  /* 4. Load Prompt */
+  , <Prout 'Loading prompt.bin...'> : e.Ign5
+  , <TLoadBinary '/home/dieguez/qwen3_perl/torchin/torchin/qwen_data/prompt.bin'> : s.PromptRaw
+  
+  /* CRITICAL: Prompt must be Long tensor with shape [batch, seq] */
+  , <TToLong s.PromptRaw> : s.PromptTensor
+  , <Prout 'Prompt shape: ' <TShape s.PromptTensor>> : e.Ign6
+  
+  /* 5. Generate */
+  , <Prout 'Generating tokens...'> : e.Ign7
+  , <QwenGenerate t.Weights (e.Cfg) s.PromptTensor 20> : e.OutputTokens
+  
+  /* 6. Output Result */
+  , <Prout '========================================='> : e.Ign8
+  = <Prout 'GENERATED: ' <FormatList e.OutputTokens>>;
+}
+
+FormatList {
+  = ;
+  s.Num e.Rest = s.Num ' ' <FormatList e.Rest>;
+}
+
+/*==============================================================================
+ * Qwen3Config_Inference - Same as 0.6B but with reduced max_position_embeddings
+ * 
+ * IMPORTANT: Format must be (('key') value) to match ConfigGet!
+ *============================================================================*/
+Qwen3Config_Inference {
+  = (('vocab_size') 151936)
+    (('hidden_size') 1024)
+    (('intermediate_size') 3072)
+    (('num_hidden_layers') 28)
+    (('num_attention_heads') 16)
+    (('num_key_value_heads') 8)
+    (('head_dim') 128)
+    (('max_position_embeddings') 512)   /* REDUCED from 32768 to save RAM */
+    (('rms_norm_eps') 1)
+    (('rope_theta') 1000000)
+    (('tie_word_embeddings') 1)
+    (('eos_token_id') 151645)
+    (('bos_token_id') 151643);
+}
+

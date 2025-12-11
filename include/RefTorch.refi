@@ -141,6 +141,7 @@ $EXTERN TChunk;      /* <TChunk s.T s.NumChunks s.Dim> == s.T1 s.T2 ... */
 
 * Repeating
 $EXTERN TRepeat;     /* <TRepeat s.T e.Repeats> == s.Result */
+$EXTERN TRepeatInterleave;
 $EXTERN TTile;       /* <TTile s.T e.Reps> == s.Result */
 
 * Flipping

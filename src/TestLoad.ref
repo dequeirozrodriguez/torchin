@@ -1,0 +1,40 @@
+$EXTERN TLoadBinary, TShape, TSlice, TReshape, Prout, Exit;
+
+$ENTRY Go { = <Main>; }
+
+Main {
+  , <Prout '--- TLoad Deep Diagnostic ---'> : e.Ign
+  /* Skip prompt.bin, it is too small for this test */
+  , <TestLayer0 './qwen_data/layer_0_packed.bin'> : e.Ign2
+  = <Prout 'Done'>;
+}
+
+TestLayer0 {
+  e.Path
+    , <Prout '1. Loading ' e.Path '...'> : e.Ign
+    , <TLoadBinary e.Path> : s.BigTensor
+    , <Prout '   [PASS] Loaded. Shape=' <TShape s.BigTensor>> : e.Ign2
+    
+    /* TEST 1: The First Slice (Norm) */
+    , <Prout '2. Attempting Slice (0->1024)...'> : e.Ign3
+    , <TSlice s.BigTensor 0 0 1024 1> : s.Slice1
+    , <Prout '   [PASS] Sliced. Shape=' <TShape s.Slice1>> : e.Ign4
+    
+    /* TEST 2: The First Reshape (The Suspect) */
+    , <Prout '3. Attempting Reshape (to 1024)...'> : e.Ign5
+    , <TReshape s.Slice1 1024> : s.Reshaped1
+    , <Prout '   [PASS] Reshaped. Shape=' <TShape s.Reshaped1>> : e.Ign6
+    
+    /* TEST 3: Multi-Dim Reshape (The MLP Weights) */
+    , <Prout '4. Attempting Multi-Dim Reshape (to 2816x1024)...'> : e.Ign7
+    /* Slice a chunk large enough for 2816*1024 = 2,883,584 elements */
+    /* Starting at offset 10000 just to be safe */
+    , <TSlice s.BigTensor 0 10000 2893584 1> : s.Slice2
+    , <Prout '   [PASS] Large Slice Created.'> : e.Ign8
+    
+    /* This is what happens inside LoadPackedLayer for W_Gate */
+    , <TReshape s.Slice2 2816 1024> : s.Reshaped2
+    , <Prout '   [PASS] Multi-Dim Reshape Success! Shape=' <TShape s.Reshaped2>> : e.Ign9
+    
+    = <Prout 'ALL TESTS PASSED for Layer 0'>;
+}

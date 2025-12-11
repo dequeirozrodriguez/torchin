@@ -726,6 +726,37 @@ $ENTRY TRepeat {
 %%
 }
 
+/* ============================================================================
+ * REPEAT INTERLEAVE
+ * Repeats elements of a tensor along a dimension, interleaving them.
+ * Unlike TRepeat which tiles [a,b] -> [a,b,a,b], this does [a,b] -> [a,a,b,b]
+ *
+ * <TRepeatInterleave s.Tensor s.Dim s.Repeats>
+ * ========================================================================== */
+$ENTRY TRepeatInterleave {
+%%
+    refalrts::Iter content_b = 0, content_e = 0;
+    refalrts::call_left(content_b, content_e, arg_begin, arg_end);
+    
+    int64_t tensor_id, dim, repeats;
+    if (!read_int(content_b, content_e, tensor_id)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, dim)) return refalrts::cRecognitionImpossible;
+    if (!read_int(content_b, content_e, repeats)) return refalrts::cRecognitionImpossible;
+    
+    torch::Tensor* t = tensor_storage::get(tensor_id);
+    if (!t) return refalrts::cRecognitionImpossible;
+    
+    // repeat_interleave: [a,b,c] with repeats=2 -> [a,a,b,b,c,c]
+    torch::Tensor result = t->repeat_interleave(repeats, dim);
+    
+    int new_id = tensor_storage::store(result);
+    
+    refalrts::reinit_number(arg_begin, new_id);
+    refalrts::splice_to_freelist(vm, arg_begin->next, arg_end);
+    return refalrts::cSuccess;
+%%
+}
+
 
 *==============================================================================
 * <TTile s.TensorID e.Reps> == s.TensorResult

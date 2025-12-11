@@ -1,13 +1,15 @@
 * src/models/QwenGenerate.ref
-* FIXED: TItem returns value*1000, divide by 1000 to get actual token
 
-$EXTERN QwenModelForward, TArgmax, TAdd, TSlice, TPrint, TGetDim, TFree, TItem, TSub;
-$EXTERN TPrecomputeFreqs, TCausalMask, TZeros, TReshape, TToLong;
-$EXTERN ConfigGet, Div;
+$EXTERN QwenModelForward, TArgmax, TAdd, TSlice, TGetDim, TFree, TItem, TSub;
+$EXTERN TPrecomputeFreqs, TCausalMask, TZeros, TReshape;
+$EXTERN ConfigGet;
 
 $ENTRY QwenGenerate {
   /* Accept t.Weights tuple */
   t.Weights (e.Cfg) s.PromptTokens s.MaxNew
+    /* DEBUG: Print what we received */
+    , <Prout 'QwenGenerate: Received t.Weights = ' t.Weights> : e.Dbg0
+    
     /* Init Config */
     = <ConfigGet (e.Cfg) 'max_position_embeddings'> : s.MaxSeq
     , <ConfigGet (e.Cfg) 'head_dim'> : s.HeadDim
@@ -28,39 +30,25 @@ $ENTRY QwenGenerate {
     /* Unpack Weights */
     , t.Weights : ((e.Layers) (e.Embeds))
     
+    /* DEBUG: Check what we unpacked */
+    , <Prout 'QwenGenerate: Unpacked e.Embeds = ' e.Embeds> : e.DbgE
+    
     /* Forward pass on the full prompt */
     , <QwenModelForward s.PromptTokens (e.Layers) (e.Embeds) (e.KVCaches) (e.Cfg) s.Freqs s.Mask 0> 
       : s.Logits (e.KV_PostPrefill)
     
-    /* Get Last Logit */
+    /* Get Last Logit and sample first token */
     , <GetLastLogit s.Logits s.PromptLen> : s.LastLogit
-    , <TPrint <TSlice s.LastLogit 2 0 5 1>> : e.DbgLogits
-
-    /* Argmax returns scalar, reshape to [1,1] and convert to Long */
     , <TArgmax s.LastLogit> : s.TokScalar
-    , <TReshape s.TokScalar 1 1> : s.TokReshaped
-    , <TToLong s.TokReshaped> : s.FirstNewTok
+    , <TReshape s.TokScalar 1 1> : s.FirstNewTok   /* CRITICAL: Reshape to [1,1] for embedding! */
     
     /* ============================== */
     /* STEP 2: DECODE (Generation)    */
     /* ============================== */
-    /* FIXED: TItem returns value*1000, extract quotient from Div */
-    , <ExtractToken s.FirstNewTok> : s.FirstVal
-    , <GenerateLoop s.FirstNewTok t.Weights e.KV_PostPrefill (e.Cfg) s.Freqs s.Mask s.PromptLen <Sub s.MaxNew 1>> 
-      : e.RestTokens
+    , <GenerateLoop s.FirstNewTok t.Weights e.KV_PostPrefill (e.Cfg) s.Freqs s.Mask s.PromptLen s.MaxNew> 
+      : e.OutputTokens
       
-    = s.FirstVal e.RestTokens;
-}
-
-/* Helper: Extract token value from tensor (TItem returns val*1000) */
-ExtractToken {
-  s.TensorID = <GetQuotient <Div <TItem s.TensorID> 1000>>;
-}
-
-/* Helper: Get quotient from Div result */
-GetQuotient {
-  (s.Q) s.R = s.Q;      /* Div returns (quotient) remainder */
-  s.Q = s.Q;            /* Or maybe just quotient */
+    = e.OutputTokens;
 }
 
 GenerateLoop {
@@ -70,7 +58,7 @@ GenerateLoop {
   /* Decode Step */
   s.CurrentTok t.W e.KV (e.Cfg) s.F s.M s.Pos s.Left
     /* Check EOS */
-    , <ExtractToken s.CurrentTok> : s.Val
+    , <TItem s.CurrentTok> : s.Val
     , <Compare s.Val 151645> : {
         '0' = ; 
         
@@ -78,24 +66,17 @@ GenerateLoop {
           /* Unpack Weights */
           , t.W : ((e.Layers) (e.Embeds))
           
-          /* Forward - s.CurrentTok is already [1,1] Long tensor */
+          /* Forward */
           = <QwenModelForward s.CurrentTok (e.Layers) (e.Embeds) (e.KV) (e.Cfg) s.F s.M s.Pos> 
             : s.Logits (e.NewKV)
           
-          /* Sample */
+          /* Sample - CRITICAL: Reshape to [1,1] for next embedding! */
           , <GetLastLogit s.Logits 1> : s.NextLogit
-          /* , <TPrint <TSlice s.Logits 2 0 5 1>> : e.DbgLogits */
-          
-          /* Reshape and convert to Long */
           , <TArgmax s.NextLogit> : s.NextTokScalar
-          , <TReshape s.NextTokScalar 1 1> : s.NextTokReshaped
-          , <TToLong s.NextTokReshaped> : s.NextTok
-          
-          /* Extract token value */
-          , <ExtractToken s.NextTok> : s.NextVal
+          , <TReshape s.NextTokScalar 1 1> : s.NextTok
           
           /* Recurse */
-          = s.NextVal <GenerateLoop s.NextTok t.W e.NewKV (e.Cfg) s.F s.M <Add s.Pos 1> <Sub s.Left 1>>;
+          = s.NextTok <GenerateLoop s.NextTok t.W e.NewKV (e.Cfg) s.F s.M <Add s.Pos 1> <Sub s.Left 1>>;
       };
 }
 

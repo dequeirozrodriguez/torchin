@@ -1,7 +1,7 @@
 * src/models/QwenModel.ref
 
 $EXTERN QwenBlock, TEmbedding, TRMSNorm, TLinearNoBias, TFree;
-$EXTERN TToLong, TShape;
+$EXTERN TToLong, TShape, TPrint, TSlice;
 $EXTERN ConfigGet;
 
 * <QwenModelForward s.Tokens (e.Layers) (s.Emb s.FinalNorm s.Head) ...>
@@ -23,7 +23,8 @@ $ENTRY QwenModelForward {
     
     /* Embedding - NOTE: using comma to continue chain! */
     , <TEmbedding s.TokensLong s.Emb> : s.H
-    
+    /* , <Prout 'Embed[0,0,:5]: '> <TPrint <TSlice <TSlice s.H 0 0 1 1> 1 0 1 1>> : e.DbgEmb */
+
     /* DEBUG: Print after embedding */
     , <Prout 'ModelForward: After Embedding = ' <TShape s.H>> : e.D3
     
@@ -54,7 +55,8 @@ ForwardLayers {
     
     , <QwenBlock s.H t.Attn t.QKNorm t.MLP (s.N1 s.N2) s.Freqs s.Mask (e.Cfg) s.Pos t.KV> 
       : s.H_Next t.KV_New
-      
+    
+    /* , <Prout 'After QwenBlock: '> <TPrint <TSlice <TSlice <TSlice s.H_Next 0 0 1 1> 1 0 1 1> 2 0 5 1>> : e.DbgLayer  */
     , <ForwardLayers s.H_Next (e.RestLayers) (e.RestKV) (e.Cfg) s.Freqs s.Mask s.Pos> 
       : s.H_Final (e.FinalKVs)
       

@@ -1,6 +1,6 @@
 * src/models/QwenBlock.ref
 
-$EXTERN TRMSNorm, QwenAttention, QwenMLP, TAdd, TFree;
+$EXTERN TRMSNorm, TSlice, TPrint, QwenAttention, QwenMLP, TAdd, TFree;
 $EXTERN ConfigGet;
 
 $ENTRY QwenBlock {

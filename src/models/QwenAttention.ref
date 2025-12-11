@@ -5,7 +5,7 @@ $INCLUDE "RefTorch";
 
 $EXTERN TRMSNorm, TRoPE, TUpdateSlice;
 $EXTERN TMatMul, TTranspose, TAdd, TDivScalar, TSoftmax, TMul, TSub;
-$EXTERN TReshape, TRepeat, TShape, TGetDim, TPermute;
+$EXTERN TReshape, TRepeat, TRepeatInterleave, TShape, TGetDim, TPermute;
 $EXTERN TFree, TClone, TSlice, TCat;
 $EXTERN ConfigGet; 
 
@@ -24,6 +24,7 @@ $ENTRY QwenAttention {
     
     /* 2. Projections (NO BIAS) */
     , <TLinearNoBias s.X s.WQ> : s.Q0
+    /* , <Prout 'Q0[0,0,:5]: '> <TPrint <TSlice <TSlice <TSlice s.Q0 0 0 1 1> 1 0 1 1> 2 0 5 1>> : e.DbgQ0 */
     , <TLinearNoBias s.X s.WK> : s.K0
     , <TLinearNoBias s.X s.WV> : s.V0
     
@@ -35,12 +36,14 @@ $ENTRY QwenAttention {
     
     /* 4. QK-NORM */
     , <TRMSNorm s.Q_Raw s.QNorm s.Eps> : s.Q_Normed
+    /*, <Prout 'Q_Normed[0,0,0,:5]: '> <TPrint <TSlice <TSlice <TSlice <TSlice s.Q_Normed 0 0 1 1> 1 0 1 1> 2 0 1 1> 3 0 5 1>> : e.DbgQN */
     , <TRMSNorm s.K_Raw s.KNorm s.Eps> : s.K_Normed
     , <TFree s.Q_Raw> <TFree s.K_Raw> : e.F2
     
     /* 5. RoPE */
     , <TSlice s.Freqs 0 s.Pos <Add s.Pos s.SeqLen> 1> : s.FreqsSliced
     , <TRoPE s.Q_Normed s.FreqsSliced> : s.Q_Rot
+    /*, <Prout 'Q_Rot[0,0,0,:5]: '> <TPrint <TSlice <TSlice <TSlice <TSlice s.Q_Rot 0 0 1 1> 1 0 1 1> 2 0 1 1> 3 0 5 1>> : e.DbgQR */
     , <TRoPE s.K_Normed s.FreqsSliced> : s.K_Rot
     , <TFree s.Q_Normed> <TFree s.K_Normed> <TFree s.FreqsSliced> : e.F3
     
@@ -60,21 +63,56 @@ $ENTRY QwenAttention {
     /* 8. Attention */
     , <TPermute s.Q_Rot 0 2 1 3> : s.Q_T
     , <TPermute s.K_Ready 0 2 3 1> : s.K_T
+
+    /* DEBUG: Print shapes and values before matmul */
+    , <Prout 'Q_T shape: ' <TShape s.Q_T>> : e.DbgQTs
+    , <Prout 'K_T shape: ' <TShape s.K_T>> : e.DbgKTs
+    , <Prout 'K_Ready[0,0,0,:5]: '> <TPrint <TSlice <TSlice <TSlice <TSlice s.K_Ready 0 0 1 1> 1 0 1 1> 2 0 1 1> 3 0 5 1>> : e.DbgKR
+
+
     , <TMatMul s.Q_T s.K_T> : s.Scores
-    , <TDivScalar s.Scores <Sqrt s.HeadDim>> : s.ScaledScores
-    
+    /*, <TDivScalar s.Scores <Sqrt s.HeadDim>> : s.ScaledScores*/
+    , <TDivScalar s.Scores <Mul 1000 <Sqrt s.HeadDim>>> : s.ScaledScores
+    /*, <Prout 'Scaled scores[0,0,0,:]: '> <TPrint <TSlice <TSlice <TSlice <TSlice s.ScaledScores 0 0 1 1> 1 0 1 1> 2 0 1 1> 3 0 6 1>> : e.DbgSc2 */
     , <ApplyMask s.ScaledScores s.Mask s.Pos> : s.MaskedScores
+    /*, <Prout 'Masked scores[0,0,0,:]: '> <TPrint <TSlice <TSlice <TSlice <TSlice s.MaskedScores 0 0 1 1> 1 0 1 1> 2 0 1 1> 3 0 6 1>> : e.DbgMasked*/
+    /*, <Prout 'Mask shape: ' <TShape s.Mask>> : e.DbgMaskShape */
+    /*, <Prout 'Mask[0,0,:3,:3]: '> <TPrint <TSlice <TSlice <TSlice <TSlice s.Mask 0 0 1 1> 1 0 1 1> 2 0 3 1> 3 0 3 1>> : e.DbgMaskVals */
     , <TSoftmax s.MaskedScores 3> : s.Probs
-    
+    /*, <Prout 'Probs[0,0,0,:6]: '> <TPrint <TSlice <TSlice <TSlice <TSlice s.Probs 0 0 1 1> 1 0 1 1> 2 0 1 1> 3 0 6 1>> : e.DbgProbs*/    
+    /*, <Prout 'V_Ready[0,0,0,:5]: '> <TPrint <TSlice <TSlice <TSlice <TSlice s.V_Ready 0 0 1 1> 1 0 1 1> 2 0 1 1> 3 0 5 1>> : e.DbgV*/
+
     /* Output */
     , <TPermute s.V_Ready 0 2 1 3> : s.V_T
     , <TMatMul s.Probs s.V_T> : s.Context
-    
+    /*, <Prout 'Context[0,0,0,:5]: '> <TPrint <TSlice <TSlice <TSlice <TSlice s.Context 0 0 1 1> 1 0 1 1> 2 0 1 1> 3 0 5 1>> : e.DbgCtx*/
+
+
     /* 9. Projection (NO BIAS) */
     , <TPermute s.Context 0 2 1 3> : s.Context_Contig
+    /*, <Prout 'Context_Contig shape: ' <TShape s.Context_Contig>> : e.DbgCCs*/
     , <TReshape s.Context_Contig s.Batch s.SeqLen <Mul s.Heads s.HeadDim>> : s.Context_Flat
-    , <TLinearNoBias s.Context_Flat s.WO> : s.Output
+    /*, <Prout 'Context_Flat shape: ' <TShape s.Context_Flat>> : e.DbgCFs*/
+    /*, <Prout 'Context_Flat[0,0,:5]: '> <TPrint <TSlice <TSlice <TSlice s.Context_Flat 0 0 1 1> 1 0 1 1> 2 0 5 1>> : e.DbgCFV*/
+    /*, <Prout 'WO shape: ' <TShape s.WO>> : e.DbgWOs*/
+    /*, <Prout 'WO[0,:5]: '> <TPrint <TSlice <TSlice s.WO 0 0 1 1> 1 0 5 1>> : e.DbgWOvals
     
+    , <Prout 'Context_Flat[0,0,:5]: '> <TPrint <TSlice <TSlice <TSlice s.Context_Flat 0 0 1 1> 1 0 1 1> 2 0 5 1>> : e.DbgCF1
+    , <Prout 'Context_Flat[0,0,128:133] (head1 start): '> <TPrint <TSlice <TSlice <TSlice s.Context_Flat 0 0 1 1> 1 0 1 1> 2 128 133 1>> : e.DbgCF2
+    , <Prout 'Context_Flat[0,0,256:261] (head2 start): '> <TPrint <TSlice <TSlice <TSlice s.Context_Flat 0 0 1 1> 1 0 1 1> 2 256 261 1>> : e.DbgCF3
+
+    , <TLinearNoBias s.Context_Flat s.WO> : s.Output
+    , <Prout 'Attn Output[0,0,:5]: '> <TPrint <TSlice <TSlice <TSlice s.Output 0 0 1 1> 1 0 1 1> 2 0 5 1>> : e.DbgOutFinal*/
+    , <Prout 'Context_Flat[0,0,:5]: '> <TPrint <TSlice <TSlice <TSlice s.Context_Flat 0 0 1 1> 1 0 1 1> 2 0 5 1>> : e.DbgCF1
+    , <Prout 'Context_Flat[0,0,128:133] (head1 start): '> <TPrint <TSlice <TSlice <TSlice s.Context_Flat 0 0 1 1> 1 0 1 1> 2 128 133 1>> : e.DbgCF2
+    , <Prout 'Context_Flat[0,0,256:261] (head2 start): '> <TPrint <TSlice <TSlice <TSlice s.Context_Flat 0 0 1 1> 1 0 1 1> 2 256 261 1>> : e.DbgCF3
+    , <TTranspose s.WO 0 1> : s.WO_T
+    , <Prout 'WO_T shape: ' <TShape s.WO_T>> : e.DbgWOTs
+    , <Prout 'WO_T[0,:5]: '> <TPrint <TSlice <TSlice s.WO_T 0 0 1 1> 1 0 5 1>> : e.DbgWOTv
+    , <TMatMul s.Context_Flat s.WO_T> : s.Output
+    , <Prout 'Output shape: ' <TShape s.Output>> : e.DbgOuts
+    , <Prout 'Attn Output[0,0,:5]: '> <TPrint <TSlice <TSlice <TSlice s.Output 0 0 1 1> 1 0 1 1> 2 0 5 1>> : e.DbgOutFinal
+    , <TFree s.WO_T> : e.Ignore2
     , <TFreeAllExcept (s.Output s.KC_Updated s.VC_Updated)> : e.F5
     
     = s.Output (s.KC_Updated s.VC_Updated);
@@ -135,9 +173,15 @@ DoManualSlice_Final {
 }
 
 /* Other Helpers */
+/*
 PrepareGQA {
   s.T s.Heads s.KVHeads, <Compare s.Heads s.KVHeads> : '0' = s.T;
   s.T s.Heads s.KVHeads = <TRepeat s.T 1 1 <Div s.Heads s.KVHeads> 1>;
+}
+*/
+PrepareGQA {
+  s.T s.Heads s.KVHeads, <Compare s.Heads s.KVHeads> : '0' = s.T;
+  s.T s.Heads s.KVHeads = <TRepeatInterleave s.T 2 <Div s.Heads s.KVHeads>>;
 }
 
 ApplyMask {

@@ -1,69 +1,130 @@
 * src/models/WeightLoader.ref
+* Loads packed binary weights for Qwen3
+* CORRECTED: Uses actual model dimensions
 
-$EXTERN TLoad, TFree;
-$EXTERN Prout, TString;
+$EXTERN TLoadBinary, TFree, TSlice, TReshape, TShape, Prout, Exit, Compare;
+$EXTERN ConfigGet, Add, Mul, Div, Symb;
 
 $ENTRY LoadQwenWeights {
-  e.BasePath s.NumLayers
-    = <Prout 'Loading Embeddings...'>
-    : e.Ignore1
-    , <TLoad <Cat e.BasePath '/model.embed_tokens.weight.pt'>> : s.Embed
-      
-    , <Prout 'Loading Final Norm...'>
-    : e.Ignore2
-    , <TLoad <Cat e.BasePath '/model.norm.weight.pt'>> : s.FinalNorm
-      
-    , <Prout 'Tying Weights (LM Head = Embedding)...'>
-    : e.Ignore3
-    , s.Embed : s.LMHead
-      
-    , <Prout 'Loading ' s.NumLayers ' Layers...'>
-    : e.Ignore4
-    , <LoadLayers e.BasePath 0 s.NumLayers> : e.Layers
-      
-    = (e.Layers) (s.Embed s.FinalNorm s.LMHead);
+  (e.BasePath) e.Cfg
+    , <Prout 'LoadQwenWeights: Starting...'> : e.Ign0
+    
+    /* 1. EXTRACT CONFIG */
+    , <ConfigGet (e.Cfg) 'num_hidden_layers'> : s.Layers
+    , <ConfigGet (e.Cfg) 'hidden_size'> : s.H
+    , <ConfigGet (e.Cfg) 'intermediate_size'> : s.Inter
+    , <ConfigGet (e.Cfg) 'num_attention_heads'> : s.Heads
+    , <ConfigGet (e.Cfg) 'num_key_value_heads'> : s.KVHeads
+    , <ConfigGet (e.Cfg) 'head_dim'> : s.HeadDim
+    
+    /* 2. CALCULATE SIZES - must match packing order! */
+    , <Mul s.Heads s.HeadDim> : s.QDim       /* 16 * 128 = 2048 */
+    , <Mul s.KVHeads s.HeadDim> : s.KVDim    /* 8 * 128 = 1024 */
+    , <Mul s.QDim s.H> : s.Sz_Q              /* 2048 * 1024 = q_proj size */
+    , <Mul s.KVDim s.H> : s.Sz_KV            /* 1024 * 1024 = k_proj/v_proj size */
+    , <Mul s.H s.QDim> : s.Sz_O              /* 1024 * 2048 = o_proj size */
+    , <Mul s.Inter s.H> : s.Sz_MLP_GU        /* 3072 * 1024 = gate/up size */
+    , <Mul s.H s.Inter> : s.Sz_MLP_D         /* 1024 * 3072 = down size */
+    
+    /* Params Tuple for slicing */
+    , (s.H s.Inter s.HeadDim s.QDim s.KVDim s.Sz_Q s.Sz_KV s.Sz_O s.Sz_MLP_GU s.Sz_MLP_D) : t.Params
+
+    , <Prout 'Loading Embeddings...'> : e.Ign1
+    , <TLoadBinary <Cat e.BasePath '/model.embed_tokens.weight.bin'>> : s.Embed
+    , <Prout 'Loading Final Norm...'> : e.Ign2
+    , <TLoadBinary <Cat e.BasePath '/model.norm.weight.bin'>> : s.FinalNorm
+
+    , <Prout 'Loading ' s.Layers ' Layers...'> : e.Ign3
+    , <Prout '  H=' s.H ' Inter=' s.Inter ' HeadDim=' s.HeadDim ' QDim=' s.QDim ' KVDim=' s.KVDim> : e.Dbg
+    
+    , <LoadLayers () (e.BasePath) t.Params 0 s.Layers> : e.LoadedLayers
+    
+    /* Return format: ((e.Layers) (s.Embed s.FinalNorm s.LMHead)) */
+    /* LMHead = Embed for tied embeddings */
+    = ((e.LoadedLayers) (s.Embed s.FinalNorm s.Embed));
 }
 
 LoadLayers {
-  e.BasePath s.Idx s.Max, <Compare s.Idx s.Max> : '+' = ;
-  e.BasePath s.Idx s.Max
-    = <Prout '  Layer ' s.Idx '...'>
-    : e.Ignore
-    , <LoadOneBlock e.BasePath s.Idx> : t.Block
-    , <LoadLayers e.BasePath <Add s.Idx 1> s.Max> : e.Rest
-    = t.Block e.Rest;
+  /* Base case: done */
+  (e.Acc) (e.Base) t.Params s.Idx s.Max, <Compare s.Idx s.Max> : '+' = e.Acc;
+  (e.Acc) (e.Base) t.Params s.Idx s.Max, <Compare s.Idx s.Max> : '0' = e.Acc;
+  
+  /* Recursive case */
+  (e.Acc) (e.Base) t.Params s.Idx s.Max
+    , <Prout '  Layer ' s.Idx '...'> : e.Ign
+    , <LoadPackedLayer (e.Base) t.Params s.Idx> : t.Block
+    , <Add s.Idx 1> : s.NextIdx
+    = <LoadLayers (e.Acc t.Block) (e.Base) t.Params s.NextIdx s.Max>;
 }
 
-LoadOneBlock {
-  e.Base s.Idx
-    /* Block Norms */
-    = <TLoad <WeightPath e.Base s.Idx 'input_layernorm'>> : s.InNorm
-    , <TLoad <WeightPath e.Base s.Idx 'post_attention_layernorm'>> : s.PostNorm
+LoadPackedLayer {
+  (e.Base) (s.H s.Inter s.HeadDim s.QDim s.KVDim s.Sz_Q s.Sz_KV s.Sz_O s.Sz_MLP_GU s.Sz_MLP_D) s.Idx
+    , <Cat e.Base '/layer_' <IntToString s.Idx> '_packed.bin'> : e.Path
+    , <TLoadBinary e.Path> : s.BigTensor
     
-    /* Attention Projections */
-    , <TLoad <WeightPath e.Base s.Idx 'self_attn.q_proj'>> : s.WQ
-    , <TLoad <WeightPath e.Base s.Idx 'self_attn.k_proj'>> : s.WK
-    , <TLoad <WeightPath e.Base s.Idx 'self_attn.v_proj'>> : s.WV
-    , <TLoad <WeightPath e.Base s.Idx 'self_attn.o_proj'>> : s.WO
+    /*=========================================================================
+     * SLICING - must match pack_qwen_weights.py order exactly!
+     * 
+     * Packing order:
+     *   1. input_layernorm.weight     [1024]
+     *   2. post_attention_layernorm   [1024]
+     *   3. q_proj.weight              [2048, 1024] -> 2097152
+     *   4. k_proj.weight              [1024, 1024] -> 1048576
+     *   5. v_proj.weight              [1024, 1024] -> 1048576
+     *   6. o_proj.weight              [1024, 2048] -> 2097152
+     *   7. q_norm.weight              [128]
+     *   8. k_norm.weight              [128]
+     *   9. gate_proj.weight           [3072, 1024] -> 3145728
+     *  10. up_proj.weight             [3072, 1024] -> 3145728
+     *  11. down_proj.weight           [1024, 3072] -> 3145728
+     *========================================================================*/
     
-    /* QK-NORM Weights */
-    , <TLoad <WeightPath e.Base s.Idx 'self_attn.q_norm'>> : s.QNorm
-    , <TLoad <WeightPath e.Base s.Idx 'self_attn.k_norm'>> : s.KNorm
+    /* Layer Norms */
+    , <SafeSliceReshape s.BigTensor 0 s.H (s.H)> : (s.InNorm) s.Off1
+    , <SafeSliceReshape s.BigTensor s.Off1 s.H (s.H)> : (s.PostNorm) s.Off2
     
-    /* MLP */
-    , <TLoad <WeightPath e.Base s.Idx 'mlp.gate_proj'>> : s.Gate
-    , <TLoad <WeightPath e.Base s.Idx 'mlp.up_proj'>> : s.Up
-    , <TLoad <WeightPath e.Base s.Idx 'mlp.down_proj'>> : s.Down
+    /* Attention Projections (NO BIASES) */
+    , <SafeSliceReshape s.BigTensor s.Off2 s.Sz_Q (s.QDim s.H)> : (s.WQ) s.Off3
+    , <SafeSliceReshape s.BigTensor s.Off3 s.Sz_KV (s.KVDim s.H)> : (s.WK) s.Off4
+    , <SafeSliceReshape s.BigTensor s.Off4 s.Sz_KV (s.KVDim s.H)> : (s.WV) s.Off5
+    , <SafeSliceReshape s.BigTensor s.Off5 s.Sz_O (s.H s.QDim)> : (s.WO) s.Off6
     
-    = ((s.InNorm s.PostNorm) 
-       (s.WQ s.WK s.WV s.WO) 
-       (s.QNorm s.KNorm) 
-       (s.Gate s.Up s.Down));
+    /* QK-Norms: shape = (head_dim) = (128) */
+    , <SafeSliceReshape s.BigTensor s.Off6 s.HeadDim (s.HeadDim)> : (s.QNorm) s.Off7
+    , <SafeSliceReshape s.BigTensor s.Off7 s.HeadDim (s.HeadDim)> : (s.KNorm) s.Off8
+    
+    /* MLP Projections */
+    , <SafeSliceReshape s.BigTensor s.Off8 s.Sz_MLP_GU (s.Inter s.H)> : (s.WG) s.Off9
+    , <SafeSliceReshape s.BigTensor s.Off9 s.Sz_MLP_GU (s.Inter s.H)> : (s.WU) s.Off10
+    , <SafeSliceReshape s.BigTensor s.Off10 s.Sz_MLP_D (s.H s.Inter)> : (s.WD) s.Off11
+    
+    , <TFree s.BigTensor> : e.IgnFree
+    
+    /* CRITICAL: Return in correct order for QwenBlock!
+       QwenBlock expects: ((s.N1 s.N2) t.Attn t.QKNorm t.MLP)
+       Where: t.Attn = (s.WQ s.WK s.WV s.WO)
+              t.QKNorm = (s.QN s.KN)
+              t.MLP = (s.WG s.WU s.WD)
+    */
+    = ((s.InNorm s.PostNorm) (s.WQ s.WK s.WV s.WO) (s.QNorm s.KNorm) (s.WG s.WU s.WD));
 }
 
-WeightPath {
-  e.Base s.Idx e.Name
-    = <Cat e.Base '/layer_' <Symb s.Idx> '_' e.Name '.weight.pt'>;
+SafeSliceReshape {
+  s.Src s.Start s.Size (e.Dims)
+    , <Add s.Start s.Size> : s.End
+    , <TSlice s.Src 0 s.Start s.End 1> : s.Slice
+    , <TReshape s.Slice e.Dims> : s.Reshaped
+    = (s.Reshaped) s.End;
 }
 
-Cat { e.A = e.A; e.A e.B = e.A <Cat e.B>; }
+/* Integer to String conversion */
+IntToString { 
+  s.N, <Compare s.N 10> : '-' = <Digit s.N>; 
+  s.N = <Symb s.N>; 
+}
+
+Digit { 0='0'; 1='1'; 2='2'; 3='3'; 4='4'; 5='5'; 6='6'; 7='7'; 8='8'; 9='9'; }
+
+/* String concatenation */
+Cat { e.X = e.X; }
+
